@@ -1,3 +1,4 @@
+```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -18,14 +19,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 
-# ============================================
-# FLASK FOR WEB SERVER
-# ============================================
 from flask import Flask, request, jsonify
 
-# ============================================
-# TELEGRAM IMPORTS
-# ============================================
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, 
@@ -33,15 +28,9 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-# ============================================
-# EXTERNAL LIBRARIES
-# ============================================
 import aiohttp
 import aiosqlite
 
-# ============================================
-# CONFIGURATION - YOUR CREDENTIALS
-# ============================================
 BOT_TOKEN = "8279300523:AAGC71G8Dd9QmmF2Yhn6MUSTKq7i-4q6p7w"
 ADMIN_ID = 1875307475
 DATABASE_URL = "rogue_nomad.db"
@@ -52,18 +41,12 @@ BOT_NAME = "Rogue Nomad"
 BOT_VERSION = "v3.0"
 PORT = int(os.environ.get("PORT", 10000))
 
-# ============================================
-# LOGGING SETUP
-# ============================================
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=getattr(logging, LOG_LEVEL)
 )
 logger = logging.getLogger(__name__)
 
-# ============================================
-# DATABASE LAYER
-# ============================================
 INIT_DB = """
 CREATE TABLE IF NOT EXISTS proxies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,18 +103,12 @@ CREATE INDEX IF NOT EXISTS idx_proxy_score ON proxies(score);
 
 @asynccontextmanager
 async def get_db():
-    """Database connection context manager."""
     async with aiosqlite.connect(DATABASE_URL) as db:
         await db.execute(INIT_DB)
         await db.commit()
         yield db
 
-# ============================================
-# PROXY MANAGER
-# ============================================
 class ProxyManager:
-    """Manages proxy rotation with persistence and scoring."""
-    
     def __init__(self):
         self._cache = []
         self._cache_time = 0
@@ -217,18 +194,7 @@ class ProxyManager:
                 "total": total[0][0] if total else 0,
                 "alive": alive[0][0] if alive else 0
             }
-    
-    async def clear_dead_proxies(self) -> int:
-        async with get_db() as db:
-            cursor = await db.execute("DELETE FROM proxies WHERE alive = 0")
-            await db.commit()
-            removed = cursor.rowcount
-            self._cache = []
-            return removed
 
-# ============================================
-# SERVICE CHECKERS (SHORTENED)
-# ============================================
 class ServiceCheckers:
     @staticmethod
     async def check_crunchyroll(email: str, password: str, proxy: Optional[str] = None) -> Dict:
@@ -343,9 +309,6 @@ class ServiceCheckers:
         except:
             return {"valid": False, "status": "error"}
 
-# ============================================
-# CHECKER ENGINE
-# ============================================
 class CheckerEngine:
     def __init__(self, proxy_manager: ProxyManager):
         self.proxy_manager = proxy_manager
@@ -439,9 +402,6 @@ class CheckerEngine:
     def get_stats(self) -> Dict:
         return self.stats
 
-# ============================================
-# TELEGRAM BOT - INITIALIZE
-# ============================================
 proxy_manager = ProxyManager()
 checker_engine = CheckerEngine(proxy_manager)
 
@@ -460,9 +420,6 @@ SERVICE_CATEGORIES = {
     }
 }
 
-# ============================================
-# ALL COMMAND HANDLERS (Shortened for space)
-# ============================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     welcome_text = f"""
@@ -643,9 +600,6 @@ Total: `{len(results)}`
     await status_msg.delete()
     context.user_data["waiting_for_creds"] = False
 
-# ============================================
-# ADMIN COMMANDS
-# ============================================
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized.")
@@ -709,9 +663,6 @@ async def reset_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await update.message.reply_text("✅ Statistics reset.")
 
-# ============================================
-# NAVIGATION CALLBACKS
-# ============================================
 async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -750,9 +701,6 @@ Total: `{stats['total']}`
         ])
     )
 
-# ============================================
-# FLASK APP FOR RENDER WEB SERVICE
-# ============================================
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -764,24 +712,17 @@ def health_check():
     return {"status": "ok", "bot": BOT_NAME, "version": BOT_VERSION}, 200
 
 def run_flask():
-    """Run Flask server on Render's PORT."""
     port = int(os.environ.get('PORT', 10000))
     logger.info(f"🌐 Flask server starting on port {port}")
     flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-# ============================================
-# MAIN FUNCTION
-# ============================================
 def main():
-    """Start the bot with Flask in background."""
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         logger.error("❌ BOT_TOKEN not set!")
         return
     
-    # Build Telegram application
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # Command handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("checkers", checkers_command))
     app.add_handler(CommandHandler("admin", admin_command))
@@ -790,7 +731,6 @@ def main():
     app.add_handler(CommandHandler("help", start_command))
     app.add_handler(CommandHandler("about", start_command))
     
-    # Callback handlers
     app.add_handler(CallbackQueryHandler(handle_category, pattern="^cat_"))
     app.add_handler(CallbackQueryHandler(handle_service_selection, pattern="^svc_"))
     app.add_handler(CallbackQueryHandler(toggle_proxy_callback, pattern="^toggle_proxy"))
@@ -798,7 +738,6 @@ def main():
     app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back_start"))
     app.add_handler(CallbackQueryHandler(checkers_command, pattern="^checkers$"))
     
-    # Message handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
     
@@ -806,20 +745,11 @@ def main():
     logger.info(f"📱 Bot: {BOT_USERNAME}")
     logger.info(f"🔗 Channel: {BOT_LINK}")
     
-    # Run the bot (this blocks)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# ============================================
-# ENTRY POINT
-# ============================================
 if __name__ == "__main__":
-    # Start Flask in a background thread
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    
-    # Wait a moment for Flask to start
     time.sleep(2)
-    
-    # Start the bot
     main()
 ```
