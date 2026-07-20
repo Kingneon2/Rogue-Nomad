@@ -330,7 +330,7 @@ class CheckerEngine:
             "netflix": {"checker": ServiceCheckers.check_netflix_token, "type"
                     "Authorization": f"Bearer {token}",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                }
+                       }
                 async with session.get(
                     "https://www.netflix.com/api/shakti/viper/metadata",
                     headers=headers,
