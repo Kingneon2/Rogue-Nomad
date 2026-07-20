@@ -750,4 +750,70 @@ if __name__ == "__main__":
     flask_thread.start()
     time.sleep(2)
     main()
+```python
+# ============================================
+# FLASK APP FOR RENDER WEB SERVICE
+# ============================================
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health():
+    return f"{BOT_NAME} is running!", 200
+
+@flask_app.route('/health')
+def health_check():
+    return {"status": "ok", "bot": BOT_NAME, "version": BOT_VERSION}, 200
+
+def run_flask():
+    port = int(os.environ.get('PORT', 10000))
+    logger.info(f"🌐 Flask server starting on port {port}")
+    flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+# ============================================
+# MAIN FUNCTION
+# ============================================
+def main():
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        logger.error("❌ BOT_TOKEN not set!")
+        return
+    
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("checkers", checkers_command))
+    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("resetstats", reset_stats_command))
+    app.add_handler(CommandHandler("help", start_command))
+    app.add_handler(CommandHandler("about", start_command))
+    
+    app.add_handler(CallbackQueryHandler(handle_category, pattern="^cat_"))
+    app.add_handler(CallbackQueryHandler(handle_service_selection, pattern="^svc_"))
+    app.add_handler(CallbackQueryHandler(toggle_proxy_callback, pattern="^toggle_proxy"))
+    app.add_handler(CallbackQueryHandler(show_stats_callback, pattern="^show_stats"))
+    app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back_start"))
+    app.add_handler(CallbackQueryHandler(checkers_command, pattern="^checkers$"))
+    
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
+    
+    logger.info(f"🚀 {BOT_NAME} {BOT_VERSION} is LIVE!")
+    logger.info(f"📱 Bot: {BOT_USERNAME}")
+    logger.info(f"🔗 Channel: {BOT_LINK}")
+    
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+# ============================================
+# ENTRY POINT - THIS IS WHERE IT STARTS
+# ============================================
+if __name__ == "__main__":
+    # Start Flask in a background thread (keeps Render happy)
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # Wait a moment for Flask to start
+    time.sleep(2)
+    
+    # Start the Telegram bot
+    main()
 ```
