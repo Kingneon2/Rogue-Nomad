@@ -236,7 +236,9 @@ class ServiceCheckers:
     async def check_netflix_token(token: str, proxy: Optional[str] = None) -> Dict:
         try:
             async with aiohttp.ClientSession() as session:
-                headers = {6"
+                headers = {
+    "Authorization": f"Bearer {token}",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 }
                 async with session.get(
                     "https://www.netflix.com/api/shakti/viper/metadata",
