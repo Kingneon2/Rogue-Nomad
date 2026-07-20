@@ -1,25 +1,18 @@
-```yaml
 services:
   - type: web
     name: rogue-nomad-bot
     runtime: python
     plan: starter
-    buildCommand: |
-      pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
       - key: BOT_TOKEN
-        sync: false
-        description: "Your Telegram Bot Token from @BotFather"
+        value: 8279300523:AAGC71G8Dd9QmmF2Yhn6MUSTKq7i-4q6p7w
       - key: ADMIN_ID
         value: 1875307475
-        description: "Admin Telegram User ID"
       - key: DATABASE_URL
         value: rogue_nomad.db
-        description: "SQLite database file"
       - key: LOG_LEVEL
         value: INFO
-        description: "Logging level"
     healthCheckPath: /health
     autoDeploy: true
-```
