@@ -414,7 +414,7 @@ class CheckerEngine:
 # CHECKER ENGINE
 # ============================================
 class CheckerEngine:
-    def init(self, proxy_manager: ProxyManager):
+    def __init__(self, proxy_manager: ProxyManager):
         self.proxy_manager = proxy_manager
         self.services = {
             "crunchyroll": {"checker": ServiceCheckers.check_crunchyroll, "type": "email:pass", "label": "🍿 Crunchyroll"},
