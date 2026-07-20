@@ -1,8 +1,9 @@
+```yaml
 services:
   - type: web
     name: rogue-nomad-bot
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
@@ -10,9 +11,8 @@ services:
         value: 8279300523:AAGC71G8Dd9QmmF2Yhn6MUSTKq7i-4q6p7w
       - key: ADMIN_ID
         value: 1875307475
-      - key: DATABASE_URL
-        value: rogue_nomad.db
-      - key: LOG_LEVEL
-        value: INFO
+      - key: PORT
+        value: 10000
     healthCheckPath: /health
     autoDeploy: true
+```
