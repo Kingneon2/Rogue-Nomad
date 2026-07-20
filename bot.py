@@ -14,20 +14,16 @@ import io
 import random
 import time
 import threading
-from datetime import datetime from typing import Dict, List, Optional, Any from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+from contextlib import asynccontextmanager
 
 from flask import Flask, request, jsonify
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, 
-    MessageHandler, filters, ContextTypes
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
-
 import aiohttp
 import aiosqlite
-
 BOT_TOKEN = "8279300523:AAGC71G8Dd9QmmF2Yhn6MUSTKq7i-4q6p7w"
 ADMIN_ID = 1875307475
 DATABASE_URL = "rogue_nomad.db"
