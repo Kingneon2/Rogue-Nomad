@@ -913,29 +913,15 @@ def run_flask():
     flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # ============================================
-# MAIN FUNCTION (WITH WEBHOOK CLEANUP)
+# MAIN FUNCTION (FIXED - NO MANUAL EVENT LOOP)
 # ============================================
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         logger.error("❌ BOT_TOKEN not set!")
         return
     
+    # Build application
     app = Application.builder().token(BOT_TOKEN).build()
-    
-    # Delete existing webhook to prevent "Conflict" errors
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        async def clean_webhook():
-            try:
-                await app.bot.delete_webhook()
-                logger.info("✅ Existing webhook deleted successfully")
-            except Exception as e:
-                logger.warning(f"Webhook cleanup (non-critical): {e}")
-        loop.run_until_complete(clean_webhook())
-        loop.close()
-    except Exception as e:
-        logger.warning(f"Webhook cleanup skipped: {e}")
     
     # Add handlers
     app.add_handler(CommandHandler("start", start_command))
@@ -966,6 +952,7 @@ def main():
     logger.info(f"🔗 Channel: {BOT_LINK}")
     logger.info(f"👤 Admin ID: {ADMIN_ID}")
     
+    # Run polling - let Application handle the event loop
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
