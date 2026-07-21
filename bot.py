@@ -465,7 +465,7 @@ SERVICE_CATEGORIES = {
 }
 
 # ============================================
-# WELCOME (SIMPLIFIED - NO COMMANDS)
+# WELCOME & CHECKERS
 # ============================================
 async def show_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -481,6 +481,35 @@ async def show_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
 
+async def show_checkers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the checkers menu - called by both /checkers command and Start Now button"""
+    if not await check_and_prompt_join(update, context):
+        return
+    
+    # Get user info to send proper response
+    if hasattr(update, 'callback_query') and update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        message = query.message
+        edit_func = query.edit_message_text
+    else:
+        message = update.message
+        edit_func = None
+    
+    keyboard = []
+    for category, services in SERVICE_CATEGORIES.items():
+        keyboard.append([InlineKeyboardButton(category, callback_data=f"cat_{category}")])
+    keyboard.append([InlineKeyboardButton("📊 Stats", callback_data="show_stats")])
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="back_start")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = "🎯 Select a category:"
+    
+    if edit_func:
+        await edit_func(text, reply_markup=reply_markup, parse_mode=None)
+    else:
+        await message.reply_text(text, reply_markup=reply_markup, parse_mode=None)
+
 # ============================================
 # COMMAND HANDLERS
 # ============================================
@@ -488,6 +517,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_and_prompt_join(update, context):
         return
     await show_welcome(update, context)
+
+async def checkers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /checkers command"""
+    await show_checkers(update, context)
+
+async def checkers_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Start Now button callback"""
+    query = update.callback_query
+    await query.answer()
+    # This is the "Start Now" button - show checkers
+    await show_checkers(update, context)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_and_prompt_join(update, context):
@@ -549,16 +589,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         label = checker_engine.services.get(service, {}).get("label", service)
         text += f"• {label}: {data['valid']}/{data['total']}\n"
     await update.message.reply_text(text, parse_mode=None)
-
-async def checkers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_and_prompt_join(update, context):
-        return
-    keyboard = []
-    for category, services in SERVICE_CATEGORIES.items():
-        keyboard.append([InlineKeyboardButton(category, callback_data=f"cat_{category}")])
-    keyboard.append([InlineKeyboardButton("📊 Stats", callback_data="show_stats")])
-    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="back_start")])
-    await update.message.reply_text("🎯 Select a category:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
 
 async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -913,17 +943,16 @@ def run_flask():
     flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # ============================================
-# MAIN FUNCTION (FIXED - NO MANUAL EVENT LOOP)
+# MAIN FUNCTION
 # ============================================
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         logger.error("❌ BOT_TOKEN not set!")
         return
     
-    # Build application
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # Add handlers
+    # Command handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("checkers", checkers_command))
     app.add_handler(CommandHandler("proxy", proxy_command))
@@ -934,7 +963,9 @@ def main():
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("resetstats", reset_stats_command))
     
+    # Callback handlers
     app.add_handler(CallbackQueryHandler(check_membership_callback, pattern="^check_membership$"))
+    app.add_handler(CallbackQueryHandler(checkers_callback, pattern="^checkers$"))  # Start Now button
     app.add_handler(CallbackQueryHandler(handle_category, pattern="^cat_"))
     app.add_handler(CallbackQueryHandler(handle_service_selection, pattern="^svc_"))
     app.add_handler(CallbackQueryHandler(skip_proxy_callback, pattern="^skip_proxy$"))
@@ -942,8 +973,8 @@ def main():
     app.add_handler(CallbackQueryHandler(proxy_stats_callback, pattern="^proxy_stats"))
     app.add_handler(CallbackQueryHandler(proxy_clear_callback, pattern="^proxy_clear"))
     app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back_start"))
-    app.add_handler(CallbackQueryHandler(checkers_command, pattern="^checkers$"))
     
+    # Message handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
     
@@ -952,7 +983,6 @@ def main():
     logger.info(f"🔗 Channel: {BOT_LINK}")
     logger.info(f"👤 Admin ID: {ADMIN_ID}")
     
-    # Run polling - let Application handle the event loop
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
