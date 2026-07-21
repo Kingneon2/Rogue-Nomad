@@ -7,9 +7,11 @@ services:
     startCommand: python bot.py
     envVars:
       - key: BOT_TOKEN
-        value: 8279300523:AAGC71G8Dd9QmmF2Yhn6MUSTKq7i-4q6p7w
+        value: 8651086980:AAFe43rg62NOceSHi-kdb5gbEK5QRqqr09E
       - key: ADMIN_ID
         value: 1875307475
+      - key: CHANNEL_ID
+        value: -1003861121732
       - key: PORT
         value: 10000
     healthCheckPath: /health
