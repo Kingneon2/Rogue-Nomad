@@ -769,13 +769,31 @@ def run_flask():
     flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # ============================================
-# MAIN FUNCTION
+# MAIN FUNCTION (WITH WEBHOOK CLEANUP)
 # ============================================
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         logger.error("❌ BOT_TOKEN not set!")
         return
+    
     app = Application.builder().token(BOT_TOKEN).build()
+    
+    # Delete existing webhook to prevent "Conflict" errors
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        async def clean_webhook():
+            try:
+                await app.bot.delete_webhook()
+                logger.info("✅ Existing webhook deleted successfully")
+            except Exception as e:
+                logger.warning(f"Webhook cleanup (non-critical): {e}")
+        loop.run_until_complete(clean_webhook())
+        loop.close()
+    except Exception as e:
+        logger.warning(f"Webhook cleanup skipped: {e}")
+    
+    # Add handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("checkers", checkers_command))
     app.add_handler(CommandHandler("proxy", proxy_command))
@@ -784,6 +802,7 @@ def main():
     app.add_handler(CommandHandler("resetstats", reset_stats_command))
     app.add_handler(CommandHandler("help", start_command))
     app.add_handler(CommandHandler("about", start_command))
+    
     app.add_handler(CallbackQueryHandler(check_membership_callback, pattern="^check_membership$"))
     app.add_handler(CallbackQueryHandler(handle_category, pattern="^cat_"))
     app.add_handler(CallbackQueryHandler(handle_service_selection, pattern="^svc_"))
@@ -793,12 +812,15 @@ def main():
     app.add_handler(CallbackQueryHandler(proxy_clear_callback, pattern="^proxy_clear"))
     app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back_start"))
     app.add_handler(CallbackQueryHandler(checkers_command, pattern="^checkers$"))
+    
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
+    
     logger.info(f"🚀 {BOT_NAME} {BOT_VERSION} is LIVE!")
     logger.info(f"📱 Bot: {BOT_USERNAME}")
     logger.info(f"🔗 Channel: {BOT_LINK}")
     logger.info(f"👤 Admin ID: {ADMIN_ID}")
+    
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
