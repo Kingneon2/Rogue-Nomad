@@ -456,7 +456,7 @@ SERVICE_CATEGORIES = {
 }
 
 # ============================================
-# WELCOME & COMMANDS (FIXED MARKDOWN)
+# WELCOME & COMMANDS
 # ============================================
 async def show_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -707,4 +707,102 @@ async def reset_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized.")
         return
-    checker_engine.stats = {"total": 0, "valid": 0, "invalid": 
+    checker_engine.stats = {"total": 0, "valid": 0, "invalid": 0, "errors": 0, "by_service": {}}
+    async with get_db() as db:
+        await db.execute("DELETE FROM checks")
+        await db.execute("DELETE FROM user_stats")
+        await db.execute("DELETE FROM global_stats")
+        await db.commit()
+    await update.message.reply_text("✅ Statistics reset.", parse_mode=None)
+
+async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await check_and_prompt_join(update, context):
+        return
+    await show_welcome(update, context)
+
+async def show_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await check_and_prompt_join(update, context):
+        return
+    stats = checker_engine.get_stats()
+    proxy_stats = await proxy_manager.get_stats()
+    text = f"📊 Statistics\nTotal: {stats['total']}\n✅ Valid: {stats['valid']}\n❌ Invalid: {stats['invalid']}\n🌐 Proxies: {proxy_stats['alive']}/{proxy_stats['total']}"
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="checkers")]]), parse_mode=None)
+
+async def proxy_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await check_and_prompt_join(update, context):
+        return
+    stats = await proxy_manager.get_stats()
+    proxies = await proxy_manager.get_working_proxies()
+    sample = "\n".join([f"• {p}" for p in proxies[:5]]) if proxies else "No proxies available"
+    await query.edit_message_text(f"🌐 Proxy Statistics\n\nTotal: {stats['total']}\nWorking: {stats['alive']}\n\nSample working proxies:\n{sample}\n\n{'... and ' + str(len(proxies) - 5) + ' more' if len(proxies) > 5 else ''}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="proxy")]]), parse_mode=None)
+
+async def proxy_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await check_and_prompt_join(update, context):
+        return
+    removed = await proxy_manager.clear_dead_proxies()
+    await query.edit_message_text(f"🗑️ Dead Proxies Cleared\n\nRemoved {removed} dead proxies from the database.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="proxy")]]), parse_mode=None)
+
+# ============================================
+# FLASK APP FOR RENDER WEB SERVICE
+# ============================================
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health():
+    return f"{BOT_NAME} is running!", 200
+
+@flask_app.route('/health')
+def health_check():
+    return {"status": "ok", "bot": BOT_NAME, "version": BOT_VERSION}, 200
+
+def run_flask():
+    port = int(os.environ.get('PORT', 10000))
+    logger.info(f"🌐 Flask server starting on port {port}")
+    flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+# ============================================
+# MAIN FUNCTION
+# ============================================
+def main():
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        logger.error("❌ BOT_TOKEN not set!")
+        return
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("checkers", checkers_command))
+    app.add_handler(CommandHandler("proxy", proxy_command))
+    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("resetstats", reset_stats_command))
+    app.add_handler(CommandHandler("help", start_command))
+    app.add_handler(CommandHandler("about", start_command))
+    app.add_handler(CallbackQueryHandler(check_membership_callback, pattern="^check_membership$"))
+    app.add_handler(CallbackQueryHandler(handle_category, pattern="^cat_"))
+    app.add_handler(CallbackQueryHandler(handle_service_selection, pattern="^svc_"))
+    app.add_handler(CallbackQueryHandler(toggle_proxy_callback, pattern="^toggle_proxy"))
+    app.add_handler(CallbackQueryHandler(show_stats_callback, pattern="^show_stats"))
+    app.add_handler(CallbackQueryHandler(proxy_stats_callback, pattern="^proxy_stats"))
+    app.add_handler(CallbackQueryHandler(proxy_clear_callback, pattern="^proxy_clear"))
+    app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back_start"))
+    app.add_handler(CallbackQueryHandler(checkers_command, pattern="^checkers$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_message))
+    logger.info(f"🚀 {BOT_NAME} {BOT_VERSION} is LIVE!")
+    logger.info(f"📱 Bot: {BOT_USERNAME}")
+    logger.info(f"🔗 Channel: {BOT_LINK}")
+    logger.info(f"👤 Admin ID: {ADMIN_ID}")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    time.sleep(2)
+    main()
